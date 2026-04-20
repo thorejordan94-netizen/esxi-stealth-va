@@ -38,7 +38,8 @@ case "$OS" in
         ;;
     sles|opensuse*)
         sudo zypper refresh
-        sudo zypper install -y nmap curl python3-pip nikto git
+        # SUSE often needs build headers for cryptography/other pip packages
+        sudo zypper install -y nmap curl python3-pip nikto git unzip python3-devel libffi-devel libopenssl-devel
         ;;
     *)
         echo "OS $OS not explicitly supported. Please install nmap, curl, nikto, nuclei manually."
