@@ -165,6 +165,8 @@ def run_pipeline(config: Dict[str, Any],
             )
             break
 
+        logger.info(f"Starting Phase {phase.phase_number}: {phase.name}")
+        logger.debug(f"Pipeline starting from Phase {start_phase}")
         try:
             phase.run(report, config)
         except Exception as e:

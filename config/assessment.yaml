@@ -11,6 +11,7 @@ target:
   hostname: "sl001983.de.internal.net"
   role: "VMware ESXi Host Client"
   executor: "root"
+  target_domain: "sl001983.de.internal.net"
 
 # --- VM Discovery (Subnet Sweep) ---
 # The framework will perform a gentle ARP/ICMP sweep to enumerate live hosts.

@@ -343,6 +343,26 @@ class Phase4Web(PhasePlugin):
 
         return findings
 
+    def _run_ssl_labs_scan(self, domain: str) -> Optional[Dict[str, Any]]:
+        """Run an SSL Labs scan for the given domain."""
+        import requests
+        api_url = "https://api.ssllabs.com/api/v3/analyze"
+        params = {
+            "host": domain,
+            "publish": "off",
+            "startNew": "on",
+            "all": "done",
+            "ignoreMismatch": "on"
+        }
+
+        try:
+            response = requests.get(api_url, params=params, timeout=300)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            logger.error(f"SSL Labs scan failed for {domain}: {e}")
+            return None
+
     def execute(self, report: AssessmentReport, config: Dict[str, Any]):
         assessment_cfg = config.get("assessment", {})
         stealth_cfg = config.get("stealth", {})
