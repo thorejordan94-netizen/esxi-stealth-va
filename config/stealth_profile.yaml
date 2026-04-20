@@ -1,0 +1,52 @@
+# ============================================================================
+# Stealth Profile — Timing & Rate Limiting
+# ============================================================================
+# Tuned for CyberArk PSM + Internal IDS environments.
+# These values prioritize stealth over speed.
+# ============================================================================
+
+# --- Network Scanning ---
+network:
+  # Maximum packets per second (nmap --max-rate)
+  max_rate_pps: 100
+  # Minimum delay between probes in milliseconds (nmap --scan-delay)
+  scan_delay_ms: 50
+  # Maximum hosts to scan in parallel
+  parallel_hosts: 3
+  # TCP connect timeout in milliseconds
+  connect_timeout_ms: 2000
+  # Nmap timing template (0=paranoid, 1=sneaky, 2=polite — DO NOT go above 2)
+  timing_template: 2
+
+# --- Subnet Sweep ---
+sweep:
+  # Delay between ICMP/ARP probes during host discovery (ms)
+  host_discovery_delay_ms: 100
+  # Use ARP only (Layer 2, non-routable, nearly invisible)
+  prefer_arp: true
+
+# --- HTTP / Web Probing ---
+http:
+  # Delay between HTTP requests in seconds
+  request_delay_s: 2.0
+  # Connection timeout for curl/requests in seconds
+  connect_timeout_s: 5
+  # Read timeout in seconds
+  read_timeout_s: 10
+  # User-Agent string (match the launch laptop's Chrome)
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+
+# --- TLS / Crypto ---
+tls:
+  # testssl.sh mode: --sneaky reduces probe intensity
+  testssl_mode: "--sneaky"
+  # Timeout per TLS connection attempt
+  connect_timeout_s: 5
+  openssl_timeout_s: 5
+
+# --- General ---
+general:
+  # Delay between phases in seconds (cool-down period)
+  inter_phase_delay_s: 5
+  # Maximum total runtime in seconds (safety cutoff: 4 hours)
+  max_runtime_s: 14400

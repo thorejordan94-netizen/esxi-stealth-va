@@ -1,0 +1,90 @@
+# ============================================================================
+# ESXi Vulnerability Assessment — Central Configuration
+# ============================================================================
+# Environment: Internal Enterprise / CyberArk PSM-monitored
+# Target:      VMware ESXi Host Client
+# ============================================================================
+
+# --- Primary Target (ESXi Host) ---
+target:
+  ip: "10.251.2.28"
+  hostname: "sl001983.de.internal.net"
+  role: "VMware ESXi Host Client"
+  executor: "root"
+
+# --- VM Discovery (Subnet Sweep) ---
+# The framework will perform a gentle ARP/ICMP sweep to enumerate live hosts.
+# Set 'method' to 'sweep' for automatic discovery or 'static' for manual list.
+vm_discovery:
+  method: "sweep"
+  # Subnet(s) to sweep — only private RFC1918 ranges allowed
+  subnets:
+    - "10.251.2.0/24"
+  # Exclude these IPs from VM findings (gateways, the ESXi host itself, etc.)
+  exclude_ips:
+    - "10.251.2.1"      # Default gateway (assumed)
+    - "10.251.2.28"     # ESXi host — scanned separately as primary target
+    - "10.251.2.255"    # Broadcast
+  # If method=static, list VM IPs here instead:
+  static_ips: []
+  # Known VM names for correlation (optional — enriches report)
+  known_vms:
+    - "v268tmp"
+    - "va010"
+    - "va011"
+    - "va012"
+    - "va013"
+    - "va014"
+    - "va015"
+    - "va016"
+    - "va017"
+    - "va018"
+    - "va019-ansible"
+
+# --- Phase Toggles ---
+phases:
+  phase1_init:        true
+  phase2_discovery:   true
+  phase3_crypto:      true
+  phase4_web:         true
+  phase5_aggregation: true
+
+# --- Scan Settings ---
+scan:
+  # Port specification for host/VM scans
+  ports: "top-1000"
+  # ESXi-specific ports to always include
+  esxi_ports: "80,443,902,5989,8000,8080,9080"
+  # Service version detection intensity (0-9, lower = quieter)
+  version_intensity: 2
+
+# --- TLS / Crypto Settings ---
+crypto:
+  # Ports to check for TLS (on the primary target)
+  tls_ports:
+    - 443
+  # Prefer testssl.sh if available (auto-detected)
+  prefer_testssl: true
+
+# --- Web Assessment Settings ---
+web:
+  # Base URL of the ESXi Host Client
+  base_url: "https://10.251.2.28"
+  # Known ESXi paths to probe
+  paths:
+    - "/ui/"
+    - "/ui/#/login"
+    - "/sdk"
+    - "/mob"
+    - "/host"
+    - "/"
+  # Verify SSL? (false = -k flag for curl, required for self-signed)
+  verify_ssl: false
+
+# --- CyberArk / Environment Metadata ---
+environment:
+  classification: "Internal / CyberArk-monitored"
+  assessment_type: "Assume-Breach Internal VA"
+  # Optional: Change Request number for audit trail
+  change_request: ""
+  notes: "Privileged Session Manager active — video + keystroke recording"
