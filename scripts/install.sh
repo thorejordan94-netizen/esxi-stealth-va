@@ -64,7 +64,16 @@ fi
 
 # 4. Install Python Dependencies
 echo "[*] Installing Python dependencies..."
-pip3 install -r requirements.txt
+PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+# Compare versions using python for portability
+IS_LEGACY=$(python3 -c "import sys; print(1 if sys.version_info < (3, 7) else 0)")
+
+if [ "$IS_LEGACY" -eq 1 ]; then
+    echo "[!] Legacy Python detected ($PYTHON_VERSION). Using requirements_legacy.txt"
+    pip3 install -r requirements_legacy.txt
+else
+    pip3 install -r requirements.txt
+fi
 
 # 5. Initialize Nuclei Templates
 echo "[*] Initializing Nuclei templates..."
