@@ -1,18 +1,21 @@
 """
-Central Orchestrator — Phase-Driven Execution Engine
+Central Orchestrator — Phase-Driven Execution Engine (v2.1.0)
 
-Runs all 5 phases in strict sequential order:
+Runs all 8 phases in strict sequential order:
+  Phase 0: Self-Update
   Phase 1: Initialization & Scoping
   Phase 2: Stealth Discovery (nmap)
-  Phase 3: Crypto Analysis (testssl.sh / Python ssl)
-  Phase 4: Web Assessment (curl probes)
-  Phase 5: Aggregation & Reporting (JSON)
+  Phase 3: Service Enumeration
+  Phase 4: Crypto Analysis (testssl.sh / SSL Labs / Python ssl)
+  Phase 5: Web Assessment (curl probes / nikto)
+  Phase 6: Vulnerability Scanning (nuclei)
+  Phase 7: Delta Analysis & Archiving
 
 Design decisions:
 - Sequential execution — stealth over speed
 - State persistence after each phase (crash recovery)
 - CyberArk-aware audit logging at every phase boundary
-- Single JSON output as the final deliverable
+- Single JSON output and HTML report as the final deliverables
 """
 
 import os
@@ -31,11 +34,14 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from orchestrator.models import AssessmentReport, AssessmentMetadata
+from orchestrator.phase0_update import Phase0Update
 from orchestrator.phase1_init import Phase1Init
 from orchestrator.phase2_discovery import Phase2Discovery
-from orchestrator.phase3_crypto import Phase3Crypto
-from orchestrator.phase4_web import Phase4Web
-from orchestrator.phase5_aggregation import Phase5Aggregation
+from orchestrator.phase3_enum import Phase3Enum
+from orchestrator.phase4_crypto import Phase4Crypto
+from orchestrator.phase5_web import Phase5Web
+from orchestrator.phase6_vulnscan import Phase6VulnScan
+from orchestrator.phase7_delta import Phase7Delta
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +81,8 @@ def load_config(config_dir: Path) -> Dict[str, Any]:
     """Load and merge all YAML config files."""
     config = {}
 
-    for config_file in ["assessment.yaml", "stealth_profile.yaml"]:
+    expected_files = ["assessment.yaml", "stealth_profile.yaml", "scan_profile.yaml"]
+    for config_file in expected_files:
         path = config_dir / config_file
         if not path.exists():
             logger.error(f"Config file not found: {path}")
@@ -84,11 +91,13 @@ def load_config(config_dir: Path) -> Dict[str, Any]:
         with open(path, 'r', encoding='utf-8') as f:
             data = yaml.safe_load(f) or {}
 
-        # Namespace configs by their file type
-        if "assessment" not in config_file:
-            config["stealth"] = data
-        else:
+        # Namespace configs
+        if config_file == "assessment.yaml":
             config["assessment"] = data
+        elif config_file == "stealth_profile.yaml":
+            config["stealth"] = data
+        elif config_file == "scan_profile.yaml":
+            config["scan_profile"] = data
 
     return config
 
@@ -102,7 +111,7 @@ def run_pipeline(config: Dict[str, Any],
 
     Args:
         config: Merged configuration dict
-        start_phase: Resume from this phase (1-5)
+        start_phase: Resume from this phase (0-7)
         mock_mode: If True, generate synthetic data instead of real scans
         dry_run: If True, validate config and check tools only (Phase 1)
     """
@@ -133,15 +142,18 @@ def run_pipeline(config: Dict[str, Any],
 
     # --- Build phase pipeline ---
     phases = [
+        Phase0Update(stealth_cfg),
         Phase1Init(stealth_cfg),
         Phase2Discovery(stealth_cfg),
-        Phase3Crypto(stealth_cfg),
-        Phase4Web(stealth_cfg),
-        Phase5Aggregation(stealth_cfg),
+        Phase3Enum(stealth_cfg),
+        Phase4Crypto(stealth_cfg),
+        Phase5Web(stealth_cfg),
+        Phase6VulnScan(stealth_cfg),
+        Phase7Delta(stealth_cfg),
     ]
 
     # --- Safety: max runtime ---
-    max_runtime = stealth_cfg.get("general", {}).get("max_runtime_s", 14400)
+    max_runtime = stealth_cfg.get("general", {}).get("max_runtime_s", 28800) # Increased to 8h for thorough scans
     pipeline_start = time.time()
 
     # --- Execute phases ---
@@ -166,7 +178,6 @@ def run_pipeline(config: Dict[str, Any],
             break
 
         logger.info(f"Starting Phase {phase.phase_number}: {phase.name}")
-        logger.debug(f"Pipeline starting from Phase {start_phase}")
         try:
             phase.run(report, config)
         except Exception as e:
@@ -182,7 +193,16 @@ def run_pipeline(config: Dict[str, Any],
         report.flush_to_disk(str(state_file))
         logger.debug(f"State checkpoint saved to {state_file}")
 
-    # --- Final ---
+    # --- Final Generation ---
+    if not dry_run:
+        try:
+            from orchestrator.report_html import generate_report
+            html_path = Path("output") / "assessment_report.html"
+            generate_report(report, str(html_path))
+            logger.info(f"HTML Report generated: {html_path}")
+        except Exception as e:
+            logger.error(f"Failed to generate HTML report: {e}")
+
     total_time = time.time() - pipeline_start
     logger.info(f"Pipeline completed in {total_time:.1f}s ({total_time/60:.1f}m)")
 

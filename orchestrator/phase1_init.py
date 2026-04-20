@@ -98,6 +98,22 @@ class Phase1Init(PhasePlugin):
                     subprocess.run(["sudo", "apt", "install", "-y", "curl"], check=True, capture_output=True)
                 elif tool == "nikto":
                     subprocess.run(["sudo", "apt", "install", "-y", "nikto"], check=True, capture_output=True)
+                elif tool == "nuclei":
+                    # Download nuclei binary
+                    import urllib.request
+                    import tarfile
+                    import tempfile
+                    import platform
+                    arch = "amd64" if platform.machine() == "x86_64" else "386"
+                    url = f"https://github.com/projectdiscovery/nuclei/releases/download/v3.2.0/nuclei_3.2.0_linux_{arch}.zip"
+                    with tempfile.TemporaryDirectory() as tmpdir:
+                        zip_path = Path(tmpdir) / "nuclei.zip"
+                        urllib.request.urlretrieve(url, zip_path)
+                        import zipfile
+                        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                            zip_ref.extractall(tmpdir)
+                        subprocess.run(["sudo", "cp", f"{tmpdir}/nuclei", "/usr/local/bin/nuclei"], check=True)
+                        subprocess.run(["sudo", "chmod", "+x", "/usr/local/bin/nuclei"], check=True)
                 elif tool == "testssl.sh":
                     # Download and install testssl.sh
                     import tempfile
@@ -167,6 +183,8 @@ class Phase1Init(PhasePlugin):
         report.metadata.change_request = env.get("change_request", "")
         report.metadata.notes = env.get("notes", "")
         report.metadata.started_at = datetime.now(timezone.utc).isoformat()
+        report.metadata.scan_profile = config.get("scan_profile", {}).get("active_profile", "standard")
+        report.metadata.framework_version = "2.1.0"
 
         # VM count from known_vms list or will be updated after sweep
         known_vms = vm_disc.get("known_vms", [])
@@ -181,6 +199,7 @@ class Phase1Init(PhasePlugin):
         tools = {
             "nmap": True,        # Required
             "curl": True,        # Required
+            "nuclei": True,      # Required for vuln scanning
             "testssl.sh": False, # Optional (Python fallback exists)
             "nikto": False,      # Optional
         }

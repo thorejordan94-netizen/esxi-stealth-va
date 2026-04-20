@@ -1,8 +1,9 @@
 # ============================================================================
-# ESXi Vulnerability Assessment — Central Configuration
+# ESXi Pentest Framework — Central Configuration
 # ============================================================================
-# Environment: Internal Enterprise / CyberArk PSM-monitored
-# Target:      VMware ESXi Host Client
+# Environment: Isolated ESXi Network (air-gapped / semi-online)
+# Scope:       50+ VMs, full network sweep
+# Rhythm:      Weekly automated execution
 # ============================================================================
 
 # --- Primary Target (ESXi Host) ---
@@ -13,7 +14,7 @@ target:
   executor: "root"
   target_domain: "sl001983.de.internal.net"
 
-# --- VM Discovery (Subnet Sweep) ---
+# --- VM Discovery (Multi-Subnet Sweep) ---
 # The framework will perform a gentle ARP/ICMP sweep to enumerate live hosts.
 # Set 'method' to 'sweep' for automatic discovery or 'static' for manual list.
 vm_discovery:
@@ -21,9 +22,12 @@ vm_discovery:
   # Subnet(s) to sweep — only private RFC1918 ranges allowed
   subnets:
     - "10.251.2.0/24"
-  # Exclude these IPs from VM findings (gateways, the ESXi host itself, etc.)
+    # Uncomment to add secondary network:
+    # - "192.168.157.0/24"
+  # Exclude these IPs from VM findings (gateways, scanner, ESXi host, etc.)
   exclude_ips:
     - "10.251.2.1"      # Default gateway (assumed)
+    - "10.251.2.25"     # Scanner host (vl268tmp)
     - "10.251.2.28"     # ESXi host — scanned separately as primary target
     - "10.251.2.255"    # Broadcast
   # If method=static, list VM IPs here instead:
@@ -43,12 +47,16 @@ vm_discovery:
     - "va019-ansible"
 
 # --- Phase Toggles ---
+# Set any phase to false to skip it entirely
 phases:
-  phase1_init:        true
-  phase2_discovery:   true
-  phase3_crypto:      true
-  phase4_web:         true
-  phase5_aggregation: true
+  phase0_update:        true
+  phase1_init:          true
+  phase2_discovery:     true
+  phase3_enum:          true
+  phase4_crypto:        true
+  phase5_web:           true
+  phase6_vulnscan:      true
+  phase7_delta:         true
 
 # --- Scan Settings ---
 scan:
@@ -61,17 +69,36 @@ scan:
 
 # --- TLS / Crypto Settings ---
 crypto:
-  # Ports to check for TLS (on the primary target)
+  # Ports to automatically check for TLS (additional HTTPS ports detected dynamically)
   tls_ports:
     - 443
   # Prefer testssl.sh if available (auto-detected)
   prefer_testssl: true
+  # Scan ALL discovered hosts with HTTPS ports (not just ESXi host)
+  scan_all_hosts: true
+
+# --- SSL Labs API Settings ---
+# NOTE: SSL Labs requires internet access to the target.
+# In an air-gapped network, leave 'enabled: false' and use testssl.sh instead.
+ssllabs:
+  enabled: false
+  api_url: "https://api.ssllabs.com/api/v3"
+  # Accept cached results up to N hours old (reduces API calls)
+  max_age_hours: 24
+  # Polling interval for async scan results (seconds)
+  poll_interval_s: 30
+  # Maximum polling attempts before timeout (30s × 40 = 20 min max)
+  max_poll_attempts: 40
+  # Whether to publish results on SSL Labs website
+  publish: "off"
+  # Only scan hosts matching this domain pattern (empty = all)
+  domain_filter: ""
 
 # --- Web Assessment Settings ---
 web:
-  # Base URL of the ESXi Host Client
+  # Base URL of the primary ESXi Host Client
   base_url: "https://10.251.2.28"
-  # Known ESXi paths to probe
+  # Known ESXi paths to probe on the primary target
   paths:
     - "/ui/"
     - "/ui/#/login"
@@ -81,11 +108,65 @@ web:
     - "/"
   # Verify SSL? (false = -k flag for curl, required for self-signed)
   verify_ssl: false
+  # Scan ALL discovered hosts with HTTP/HTTPS ports
+  scan_all_hosts: true
+  # Use nikto if available (auto-detected)
+  use_nikto: true
+
+# --- Nuclei Vulnerability Scanning ---
+nuclei:
+  enabled: true
+  # Path to nuclei templates (pre-downloaded for air-gapped use)
+  templates_dir: ""  # Empty = use default (~/.local/nuclei-templates)
+  # Severity filter — only report findings at these levels
+  severity_filter: "critical,high,medium"
+  # Rate limiting (requests per second)
+  rate_limit: 50
+  # Concurrent template executions
+  concurrency: 10
+  # Timeout per request (seconds)
+  timeout: 10
+  # Template tags to include
+  tags:
+    - "cve"
+    - "misconfig"
+    - "exposure"
+    - "default-login"
+    - "tech"
+  # Template tags to EXCLUDE (noisy or potentially dangerous)
+  exclude_tags:
+    - "dos"
+    - "fuzz"
+    - "intrusive"
+    - "sqli"
+    - "xss"
+  # Extra nuclei CLI arguments (advanced)
+  extra_args: []
+
+# --- Delta Reporting ---
+delta:
+  enabled: true
+  # Directory to archive weekly reports
+  history_dir: "output/history"
+  # Number of weeks to keep in history
+  keep_weeks: 12
+
+# --- Self-Update Settings ---
+update:
+  # Pull latest framework code from git remote
+  git_pull: true
+  # Update nuclei templates
+  nuclei_templates: true
+  # Offline template update: path to tarball (if air-gapped)
+  # Leave empty for online update via 'nuclei -ut'
+  offline_templates_tarball: ""
+  # Update system tools (requires root/sudo)
+  system_tools: false
 
 # --- CyberArk / Environment Metadata ---
 environment:
-  classification: "Internal / CyberArk-monitored"
-  assessment_type: "Assume-Breach Internal VA"
+  classification: "Internal / Isolated ESXi Network"
+  assessment_type: "Automated Weekly Pentest"
   # Optional: Change Request number for audit trail
   change_request: ""
-  notes: "Privileged Session Manager active — video + keystroke recording"
+  notes: "Wöchentlicher automatisierter Pentest — ESXi-Netzwerk mit 50+ VMs"
