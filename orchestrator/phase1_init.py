@@ -69,6 +69,73 @@ class Phase1Init(PhasePlugin):
         logger.warning(f"  ✗ {tool_name} not found")
         return False
 
+    def _install_missing_tools(self, tools: Dict[str, bool]) -> Dict[str, bool]:
+        """Attempt to install missing tools automatically on Linux systems."""
+        import platform
+        if platform.system() != "Linux":
+            logger.warning("Automatic tool installation only supported on Linux. Please install tools manually.")
+            return {tool: False for tool in tools}
+
+        # Check if we have sudo
+        if not shutil.which("sudo"):
+            logger.warning("sudo not found. Cannot install tools automatically. Please install manually or run as root.")
+            return {tool: False for tool in tools}
+
+        logger.info("Attempting automatic installation of missing tools...")
+
+        installed = {}
+        for tool, required in tools.items():
+            if self._check_tool(tool):
+                installed[tool] = True
+                continue
+
+            logger.info(f"Installing {tool}...")
+            try:
+                if tool == "nmap":
+                    subprocess.run(["sudo", "apt", "update"], check=True, capture_output=True)
+                    subprocess.run(["sudo", "apt", "install", "-y", "nmap"], check=True, capture_output=True)
+                elif tool == "curl":
+                    subprocess.run(["sudo", "apt", "install", "-y", "curl"], check=True, capture_output=True)
+                elif tool == "nikto":
+                    subprocess.run(["sudo", "apt", "install", "-y", "nikto"], check=True, capture_output=True)
+                elif tool == "testssl.sh":
+                    # Download and install testssl.sh
+                    import tempfile
+                    import zipfile
+                    import urllib.request
+
+                    with tempfile.TemporaryDirectory() as tmpdir:
+                        zip_path = Path(tmpdir) / "testssl.zip"
+                        urllib.request.urlretrieve("https://github.com/drwetter/testssl.sh/archive/refs/heads/master.zip", zip_path)
+                        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                            zip_ref.extractall(tmpdir)
+                        # Find the extracted directory (it might be testssl.sh-master or testssl.sh-3.3dev)
+                        extracted_dirs = [d for d in Path(tmpdir).iterdir() if d.is_dir() and d.name.startswith("testssl.sh")]
+                        if not extracted_dirs:
+                            raise FileNotFoundError("Could not find extracted testssl.sh directory")
+                        extracted_dir = extracted_dirs[0]
+                        script_path = extracted_dir / "testssl.sh"
+                        install_path = Path("/usr/local/bin/testssl.sh")
+                        subprocess.run(["sudo", "cp", str(script_path), str(install_path)], check=True)
+                        subprocess.run(["sudo", "chmod", "+x", str(install_path)], check=True)
+
+                # Re-check after installation
+                if self._check_tool(tool):
+                    logger.info(f"  ✓ {tool} installed successfully")
+                    installed[tool] = True
+                else:
+                    logger.error(f"  ✗ Failed to install {tool}")
+                    installed[tool] = False
+
+            except subprocess.CalledProcessError as e:
+                logger.error(f"  ✗ Installation of {tool} failed: {e}")
+                installed[tool] = False
+            except Exception as e:
+                logger.error(f"  ✗ Unexpected error installing {tool}: {e}")
+                installed[tool] = False
+
+        return installed
+
     def execute(self, report: AssessmentReport, config: Dict[str, Any]):
         assessment_cfg = config.get("assessment", {})
         stealth_cfg = config.get("stealth", {})
@@ -119,12 +186,37 @@ class Phase1Init(PhasePlugin):
         }
 
         tool_status = {}
+        missing_required = []
+        missing_optional = []
         for tool, required in tools.items():
             available = self._check_tool(tool)
             tool_status[tool] = available
-            if required and not available:
-                report.add_error("phase1_init", self.name,
-                    f"Required tool '{tool}' not found. Install it or add to PATH.")
+            if not available:
+                if required:
+                    missing_required.append(tool)
+                else:
+                    missing_optional.append(tool)
+
+        # Attempt automatic installation of missing required tools
+        if missing_required:
+            logger.info(f"Required tools missing: {', '.join(missing_required)}. Attempting automatic installation...")
+            install_results = self._install_missing_tools({tool: True for tool in missing_required})
+            for tool, success in install_results.items():
+                tool_status[tool] = success
+                if not success:
+                    report.add_error("phase1_init", self.name,
+                        f"Required tool '{tool}' not found and automatic installation failed. Install it manually or add to PATH.")
+
+        # Attempt automatic installation of missing optional tools
+        if missing_optional:
+            logger.info(f"Optional tools missing: {', '.join(missing_optional)}. Attempting automatic installation...")
+            install_results = self._install_missing_tools({tool: False for tool in missing_optional})
+            for tool, success in install_results.items():
+                tool_status[tool] = success
+                if success:
+                    logger.info(f"Optional tool '{tool}' installed successfully.")
+                else:
+                    logger.warning(f"Optional tool '{tool}' could not be installed automatically.")
 
         # Store tool availability for downstream phases
         config["_tool_status"] = tool_status
