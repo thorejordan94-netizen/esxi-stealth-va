@@ -136,33 +136,54 @@ class Phase0Update(PhasePlugin):
             return False
 
     def _update_system_tools(self) -> bool:
-        """Update system tools via apt (requires sudo)."""
+        """Update system tools via apt or zypper (requires sudo)."""
         if not shutil.which("sudo"):
             logger.info("sudo not available — skipping system tool updates")
             return False
 
-        logger.info("Updating system tools via apt...")
-        self.log_for_cyberark("Updating system tools (nmap, nikto)")
-
-        # Update package lists
-        success, _, stderr = self._run_cmd(
-            ["sudo", "apt-get", "update", "-qq"], timeout=120
-        )
-        if not success:
-            logger.warning(f"  ⚠ apt update failed: {stderr[:200]}")
+        # Detect package manager
+        pkg_mgr = "apt" if shutil.which("apt-get") else "zypper" if shutil.which("zypper") else None
+        
+        if not pkg_mgr:
+            logger.info("No supported package manager found — skipping system tool updates")
             return False
 
-        # Upgrade specific tools only
-        tools = ["nmap", "nikto", "curl"]
-        for tool in tools:
-            success, stdout, stderr = self._run_cmd(
-                ["sudo", "apt-get", "install", "-y", "--only-upgrade", tool],
-                timeout=120
+        logger.info(f"Updating system tools via {pkg_mgr}...")
+        self.log_for_cyberark(f"Updating system tools (nmap, nikto) via {pkg_mgr}")
+
+        if pkg_mgr == "apt":
+            # Update package lists
+            success, _, stderr = self._run_cmd(
+                ["sudo", "apt-get", "update", "-qq"], timeout=120
             )
-            if success:
-                logger.info(f"  ✓ {tool} updated")
-            else:
-                logger.debug(f"  {tool}: {stderr[:100]}")
+            if not success:
+                logger.warning(f"  ⚠ apt update failed: {stderr[:200]}")
+                return False
+
+            # Upgrade specific tools only
+            tools = ["nmap", "nikto", "curl"]
+            for tool in tools:
+                success, stdout, stderr = self._run_cmd(
+                    ["sudo", "apt-get", "install", "-y", "--only-upgrade", tool],
+                    timeout=120
+                )
+                if success:
+                    logger.info(f"  ✓ {tool} updated")
+                else:
+                    logger.debug(f"  {tool}: {stderr[:100]}")
+        
+        elif pkg_mgr == "zypper":
+            # Update specific tools only
+            tools = ["nmap", "nikto", "curl"]
+            for tool in tools:
+                success, stdout, stderr = self._run_cmd(
+                    ["sudo", "zypper", "install", "-y", tool],
+                    timeout=120
+                )
+                if success:
+                    logger.info(f"  ✓ {tool} updated")
+                else:
+                    logger.debug(f"  {tool}: {stderr[:100]}")
 
         return True
 
