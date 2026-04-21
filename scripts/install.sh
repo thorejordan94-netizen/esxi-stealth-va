@@ -78,10 +78,13 @@ if [ "$OFFLINE_MODE" = false ]; then
             ;;
         sles|opensuse*)
             if [ -n "$PROXY_URL" ]; then
-                sudo zypper -p "$PROXY_URL" refresh
+                echo "[*] Configuring zypper with proxy..."
+                sudo zypper modifyrepo --all --disable-refresh || true
+                sudo zypper -p "$PROXY_URL" refresh --force-build || true
                 sudo zypper -p "$PROXY_URL" install -y nmap curl python3-pip nikto git unzip python3-devel libffi-devel libopenssl-devel
             else
-                sudo zypper refresh
+                echo "[*] Refreshing zypper repositories..."
+                sudo zypper refresh --force-build || true
                 sudo zypper install -y nmap curl python3-pip nikto git unzip python3-devel libffi-devel libopenssl-devel
             fi
             ;;
