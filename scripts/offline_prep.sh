@@ -8,6 +8,29 @@
 
 set -e
 
+# Proxy Configuration
+PROXY_HOST="${PROXY_HOST:-}"
+PROXY_PORT="${PROXY_PORT:-}"
+
+if [[ "$*" == *"--proxy="* ]]; then
+    PROXY_HOST=$(echo "$*" | grep -oP '(?<=--proxy=)[^[:space:]]*' | head -1)
+fi
+
+if [[ "$*" == *"--proxy-port="* ]]; then
+    PROXY_PORT=$(echo "$*" | grep -oP '(?<=--proxy-port=)[^[:space:]]*' | head -1)
+fi
+
+# Set proxy environment variables if configured
+if [ -n "$PROXY_HOST" ]; then
+    PROXY_URL="http://$PROXY_HOST${PROXY_PORT:+:$PROXY_PORT}"
+    export http_proxy="$PROXY_URL"
+    export https_proxy="$PROXY_URL"
+    export HTTP_PROXY="$PROXY_URL"
+    export HTTPS_PROXY="$PROXY_URL"
+    export no_proxy="localhost,127.0.0.1"
+    echo "[*] Using proxy: $PROXY_URL"
+fi
+
 echo "----------------------------------------------------------------------"
 echo "  ESXi Stealth VA — Air-Gap Preparation"
 echo "----------------------------------------------------------------------"
@@ -26,7 +49,11 @@ N_ARCH="amd64"
 N_URL="https://github.com/projectdiscovery/nuclei/releases/download/v${N_VERSION}/nuclei_${N_VERSION}_linux_${N_ARCH}.zip"
 
 echo "[*] Downloading Nuclei v${N_VERSION}..."
-curl -L "$N_URL" -o "$BUNDLE_DIR/bin/nuclei.zip"
+if [ -n "$PROXY_URL" ]; then
+    curl -x "$PROXY_URL" -L "$N_URL" -o "$BUNDLE_DIR/bin/nuclei.zip"
+else
+    curl -L "$N_URL" -o "$BUNDLE_DIR/bin/nuclei.zip"
+fi
 unzip -o "$BUNDLE_DIR/bin/nuclei.zip" -d "$BUNDLE_DIR/bin/"
 rm "$BUNDLE_DIR/bin/nuclei.zip"
 chmod +x "$BUNDLE_DIR/bin/nuclei"
@@ -35,20 +62,35 @@ chmod +x "$BUNDLE_DIR/bin/nuclei"
 # We can't easily get a release zip of templates, so we clone and tar
 echo "[*] Downloading Nuclei Templates..."
 rm -rf "$BUNDLE_DIR/templates/nuclei-templates"
+if [ -n "$PROXY_URL" ]; then
+    git config --global http.proxy "$PROXY_URL"
+    git config --global https.proxy "$PROXY_URL"
+fi
 git clone --depth 1 https://github.com/projectdiscovery/nuclei-templates.git "$BUNDLE_DIR/templates/nuclei-templates"
 tar -czf "$BUNDLE_DIR/templates/nuclei-templates.tar.gz" -C "$BUNDLE_DIR/templates" nuclei-templates
 rm -rf "$BUNDLE_DIR/templates/nuclei-templates"
 
 # 4. Download Python Wheels (Modern)
 echo "[*] Downloading Python Wheels (Modern - Python 3.7+)..."
-pip download -r requirements.txt -d "$BUNDLE_DIR/wheels/modern" --platform manylinux2014_x86_64 --only-binary=:all:
+if [ -n "$PROXY_URL" ]; then
+    pip download -r requirements.txt -d "$BUNDLE_DIR/wheels/modern" --platform manylinux2014_x86_64 --only-binary=:all: --proxy "$PROXY_URL"
+else
+    pip download -r requirements.txt -d "$BUNDLE_DIR/wheels/modern" --platform manylinux2014_x86_64 --only-binary=:all:
+fi
 
 # 5. Download Python Wheels (Legacy - Python 3.6)
 echo "[*] Downloading Python Wheels (Legacy - Python 3.6)..."
-pip download -r requirements_legacy.txt -d "$BUNDLE_DIR/wheels/legacy" \
-    --platform manylinux2014_x86_64 \
-    --python-version 36 \
-    --only-binary=:all: || echo "Warning: Some legacy wheels might need manual download if not available as binaries."
+if [ -n "$PROXY_URL" ]; then
+    pip download -r requirements_legacy.txt -d "$BUNDLE_DIR/wheels/legacy" \
+        --platform manylinux2014_x86_64 \
+        --python-version 36 \
+        --only-binary=:all: --proxy "$PROXY_URL" || echo "Warning: Some legacy wheels might need manual download if not available as binaries."
+else
+    pip download -r requirements_legacy.txt -d "$BUNDLE_DIR/wheels/legacy" \
+        --platform manylinux2014_x86_64 \
+        --python-version 36 \
+        --only-binary=:all: || echo "Warning: Some legacy wheels might need manual download if not available as binaries."
+fi
 
 # 6. Copy Installer and Scripts
 echo "[*] Packing scripts..."

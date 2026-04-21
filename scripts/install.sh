@@ -8,9 +8,32 @@
 
 set -e
 
+# Proxy Configuration
+PROXY_HOST="${PROXY_HOST:-}"
+PROXY_PORT="${PROXY_PORT:-}"
 OFFLINE_MODE=false
+
 if [[ "$*" == *"--offline"* ]]; then
     OFFLINE_MODE=true
+fi
+
+if [[ "$*" == *"--proxy="* ]]; then
+    PROXY_HOST=$(echo "$*" | grep -oP '(?<=--proxy=)[^[:space:]]*' | head -1)
+fi
+
+if [[ "$*" == *"--proxy-port="* ]]; then
+    PROXY_PORT=$(echo "$*" | grep -oP '(?<=--proxy-port=)[^[:space:]]*' | head -1)
+fi
+
+# Set proxy environment variables if configured
+if [ -n "$PROXY_HOST" ]; then
+    PROXY_URL="http://$PROXY_HOST${PROXY_PORT:+:$PROXY_PORT}"
+    export http_proxy="$PROXY_URL"
+    export https_proxy="$PROXY_URL"
+    export HTTP_PROXY="$PROXY_URL"
+    export HTTPS_PROXY="$PROXY_URL"
+    export no_proxy="localhost,127.0.0.1"
+    echo "[*] Using proxy: $PROXY_URL"
 fi
 
 echo "----------------------------------------------------------------------"
@@ -32,18 +55,35 @@ echo "[*] Detecting OS: $OS"
 if [ "$OFFLINE_MODE" = false ]; then
     case "$OS" in
         ubuntu|debian|kali)
-            sudo apt-get update
-            sudo apt-get install -y nmap curl python3-pip nikto git unzip
+            if [ -n "$PROXY_URL" ]; then
+                sudo apt-get -o Acquire::http::Proxy="$PROXY_URL" -o Acquire::https::Proxy="$PROXY_URL" update
+                sudo apt-get -o Acquire::http::Proxy="$PROXY_URL" -o Acquire::https::Proxy="$PROXY_URL" install -y nmap curl python3-pip nikto git unzip
+            else
+                sudo apt-get update
+                sudo apt-get install -y nmap curl python3-pip nikto git unzip
+            fi
             ;;
         centos|rhel|almalinux)
-            sudo yum check-update || true
-            sudo yum install -y nmap curl python3-pip git unzip
-            sudo yum install -y epel-release || true
-            sudo yum install -y nikto || true
+            if [ -n "$PROXY_URL" ]; then
+                sudo yum --httpproxy="$PROXY_URL" check-update || true
+                sudo yum --httpproxy="$PROXY_URL" install -y nmap curl python3-pip git unzip
+                sudo yum --httpproxy="$PROXY_URL" install -y epel-release || true
+                sudo yum --httpproxy="$PROXY_URL" install -y nikto || true
+            else
+                sudo yum check-update || true
+                sudo yum install -y nmap curl python3-pip git unzip
+                sudo yum install -y epel-release || true
+                sudo yum install -y nikto || true
+            fi
             ;;
         sles|opensuse*)
-            sudo zypper refresh
-            sudo zypper install -y nmap curl python3-pip nikto git unzip python3-devel libffi-devel libopenssl-devel
+            if [ -n "$PROXY_URL" ]; then
+                sudo zypper -p "$PROXY_URL" refresh
+                sudo zypper -p "$PROXY_URL" install -y nmap curl python3-pip nikto git unzip python3-devel libffi-devel libopenssl-devel
+            else
+                sudo zypper refresh
+                sudo zypper install -y nmap curl python3-pip nikto git unzip python3-devel libffi-devel libopenssl-devel
+            fi
             ;;
         *)
             echo "OS $OS not explicitly supported. Install nmap, curl, nikto, nuclei manually."
@@ -68,7 +108,11 @@ else
         if [ "$ARCH" = "x86_64" ]; then N_ARCH="amd64"; else N_ARCH="386"; fi
         VERSION="3.2.0"
         TEMP_DIR=$(mktemp -d)
-        curl -L "https://github.com/projectdiscovery/nuclei/releases/download/v${VERSION}/nuclei_${VERSION}_linux_${N_ARCH}.zip" -o "$TEMP_DIR/nuclei.zip"
+        if [ -n "$PROXY_URL" ]; then
+            curl -x "$PROXY_URL" -L "https://github.com/projectdiscovery/nuclei/releases/download/v${VERSION}/nuclei_${VERSION}_linux_${N_ARCH}.zip" -o "$TEMP_DIR/nuclei.zip"
+        else
+            curl -L "https://github.com/projectdiscovery/nuclei/releases/download/v${VERSION}/nuclei_${VERSION}_linux_${N_ARCH}.zip" -o "$TEMP_DIR/nuclei.zip"
+        fi
         unzip -o "$TEMP_DIR/nuclei.zip" -d "$TEMP_DIR"
         sudo mv "$TEMP_DIR/nuclei" /usr/local/bin/
         sudo chmod +x /usr/local/bin/nuclei
@@ -96,7 +140,12 @@ if [ "$OFFLINE_MODE" = true ]; then
     echo "[*] Performing offline pip install from $WHEEL_DIR..."
     pip3 install --no-index --find-links="$WHEEL_DIR" -r "$REQ_FILE"
 else
-    pip3 install -r "$REQ_FILE"
+    if [ -n "$PROXY_URL" ]; then
+        pip3 install --proxy "[user:passwd@]proxy.server:port" -r "$REQ_FILE" || \
+        pip3 install --proxy "$PROXY_URL" -r "$REQ_FILE"
+    else
+        pip3 install -r "$REQ_FILE"
+    fi
 fi
 
 # 5. Initialize Nuclei Templates
