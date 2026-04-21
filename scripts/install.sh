@@ -176,3 +176,13 @@ echo "----------------------------------------------------------------------"
 echo "  To start a test run:"
     echo "    python3 run_assessment.py --mock"
 echo "----------------------------------------------------------------------"
+
+echo "[*] Installing testssl.sh..."
+if [ ! -d "/usr/local/testssl.sh" ]; then
+    # Use the proxy to reach GitHub
+    git config --global http.proxy "http://192.168.157.6:8080/"
+    git clone --depth 1 https://github.com/drwetter/testssl.sh.git /usr/local/testssl.sh
+    ln -s /usr/local/testssl.sh/testssl.sh /usr/local/bin/testssl.sh
+    git config --global --unset http.proxy
+fi
+echo "[+] testssl.sh installed successfully."

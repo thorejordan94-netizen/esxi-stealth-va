@@ -25,6 +25,7 @@ Output:
 import sys
 import argparse
 import logging
+import io
 from pathlib import Path
 
 # Ensure project root is in path
@@ -32,11 +33,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+# Cleaned up imports (no duplicates)
 from orchestrator.main import setup_logging, load_config, run_pipeline
+from orchestrator.ssl_scanner import run_ssl_automation
 
 def main():
     # Fix Windows console encoding
-    import io
     if sys.stdout.encoding != 'utf-8':
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
@@ -80,9 +82,9 @@ def main():
     # --- Banner ---
     print("\033[94m")
     print("╔══════════════════════════════════════════════════════════════════╗")
-    print("║     ESXi Vulnerability Assessment Framework v2.1.0            ║")
-    print("║     Automated Weekly Pentest Orchestrator                     ║")
-    print("║     Internal Use Only — CyberArk PSM Monitored                ║")
+    print("║     ESXi Vulnerability Assessment Framework v2.1.0               ║")
+    print("║     Automated Weekly Pentest Orchestrator                        ║")
+    print("║     Internal Use Only — CyberArk PSM Monitored                   ║")
     print("╚══════════════════════════════════════════════════════════════════╝")
     print("\033[0m")
 
@@ -115,6 +117,12 @@ def main():
 
     # --- Run Pipeline ---
     try:
+        # --> TRIGGER SSL AUTOMATION BEFORE MAIN PIPELINE <--
+        # We skip it during a dry-run so it doesn't accidentally launch Nmap
+        if not args.dry_run:
+            run_ssl_automation(subnet="192.168.157.0/24")
+
+        # Now run the main framework pipeline
         report = run_pipeline(
             config=config,
             start_phase=start_phase,
@@ -133,7 +141,7 @@ def main():
             if html_path.exists():
                 print(f"🖥️  HTML Report: {html_path.absolute()}")
             
-            if report.delta:
+            if report and hasattr(report, 'delta') and report.delta:
                 d = report.delta.summary
                 print(f"Δ  Delta: \033[91m{d.get('new', 0)} new\033[0m, "
                       f"\033[92m{d.get('resolved', 0)} resolved\033[0m")
