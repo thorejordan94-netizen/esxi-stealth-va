@@ -7,7 +7,7 @@ def scan_network_for_https(subnet="192.168.157.0/24"):
     
     nmap_cmd = ["nmap", "-p", "443", "--open", "-oG", "-", subnet]
     try:
-        result = subprocess.run(nmap_cmd, capture_output=True, text=True, check=True)
+        result = subprocess.run(nmap_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=True)
     except subprocess.CalledProcessError as e:
         logging.error(f"[!] Nmap scan failed: {e}")
         return []
