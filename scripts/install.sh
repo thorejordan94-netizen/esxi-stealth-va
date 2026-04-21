@@ -8,6 +8,9 @@
 
 set -e
 
+# Change to the project root directory so relative paths work correctly
+cd "$(dirname "$0")/.."
+
 # Proxy Configuration
 PROXY_HOST="${PROXY_HOST:-}"
 PROXY_PORT="${PROXY_PORT:-}"
