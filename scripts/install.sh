@@ -84,17 +84,17 @@ if [ "$OFFLINE_MODE" = false ]; then
                 echo "[*] Configuring zypper with proxy..."
                 sudo env http_proxy="$PROXY_URL" https_proxy="$PROXY_URL" HTTP_PROXY="$PROXY_URL" HTTPS_PROXY="$PROXY_URL" zypper ar --no-gpgcheck --priority 100 "https://download.opensuse.org/distribution/leap/15.6/repo/oss/" "OSS-$RANDOM" 2>/dev/null || true
                 sudo env http_proxy="$PROXY_URL" https_proxy="$PROXY_URL" HTTP_PROXY="$PROXY_URL" HTTPS_PROXY="$PROXY_URL" zypper refresh -f -q 2>/dev/null || echo "[!] Warning: Repository refresh had issues, continuing anyway..."
-                # Nikto is often not in default openSUSE repos, ignoring failure for nikto
-                sudo env http_proxy="$PROXY_URL" https_proxy="$PROXY_URL" HTTP_PROXY="$PROXY_URL" HTTPS_PROXY="$PROXY_URL" zypper install -y nmap curl python311-pip python311 python3-pip git unzip python3-devel libffi-devel libopenssl-devel 2>&1 || {
+                # git depends on git-core but openSUSE has some broken repo states. Adding --non-interactive and --no-confirm prevents the script from hanging/failing on conflicts.
+                sudo env http_proxy="$PROXY_URL" https_proxy="$PROXY_URL" HTTP_PROXY="$PROXY_URL" HTTPS_PROXY="$PROXY_URL" zypper --non-interactive install -y nmap curl python311-pip python311 python3-pip git unzip python3-devel libffi-devel libopenssl-devel 2>&1 || {
                     echo "[!] zypper install failed, trying with --no-gpg-checks..."
-                    sudo env http_proxy="$PROXY_URL" https_proxy="$PROXY_URL" HTTP_PROXY="$PROXY_URL" HTTPS_PROXY="$PROXY_URL" zypper --no-gpg-checks install -y nmap curl python311-pip python311 python3-pip git unzip python3-devel libffi-devel libopenssl-devel || true
+                    sudo env http_proxy="$PROXY_URL" https_proxy="$PROXY_URL" HTTP_PROXY="$PROXY_URL" HTTPS_PROXY="$PROXY_URL" zypper --non-interactive --no-gpg-checks install -y nmap curl python311-pip python311 python3-pip git unzip python3-devel libffi-devel libopenssl-devel || true
                 }
             else
                 echo "[*] Refreshing zypper repositories..."
                 sudo zypper refresh -f -q 2>/dev/null || echo "[!] Warning: Repository refresh had issues, continuing anyway..."
-                sudo zypper install -y nmap curl python311-pip python311 python3-pip git unzip python3-devel libffi-devel libopenssl-devel 2>&1 || {
+                sudo zypper --non-interactive install -y nmap curl python311-pip python311 python3-pip git unzip python3-devel libffi-devel libopenssl-devel 2>&1 || {
                     echo "[!] zypper install failed, trying with --no-gpg-checks..."
-                    sudo zypper --no-gpg-checks install -y nmap curl python311-pip python311 python3-pip git unzip python3-devel libffi-devel libopenssl-devel || true
+                    sudo zypper --non-interactive --no-gpg-checks install -y nmap curl python311-pip python311 python3-pip git unzip python3-devel libffi-devel libopenssl-devel || true
                 }
             fi
             ;;
