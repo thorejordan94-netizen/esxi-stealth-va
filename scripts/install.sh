@@ -79,18 +79,18 @@ if [ "$OFFLINE_MODE" = false ]; then
         sles|opensuse*)
             if [ -n "$PROXY_URL" ]; then
                 echo "[*] Configuring zypper with proxy..."
-                sudo zypper ar --no-gpg-check --priority 100 "https://download.opensuse.org/distribution/leap/15.6/repo/oss/" "OSS-$RANDOM" 2>/dev/null || true
+                sudo zypper ar --no-gpgcheck --priority 100 "https://download.opensuse.org/distribution/leap/15.6/repo/oss/" "OSS-$RANDOM" 2>/dev/null || true
                 sudo zypper refresh -f -q 2>/dev/null || echo "[!] Warning: Repository refresh had issues, continuing anyway..."
-                sudo zypper -p "$PROXY_URL" install -y nmap curl python3-pip nikto git unzip python3-devel libffi-devel libopenssl-devel 2>&1 || {
-                    echo "[!] zypper install failed, trying with --no-gpg-check..."
-                    sudo zypper --no-gpg-check -p "$PROXY_URL" install -y nmap curl python3-pip nikto git unzip python3-devel libffi-devel libopenssl-devel || true
+                sudo zypper install -y nmap curl python3-pip nikto git unzip python3-devel libffi-devel libopenssl-devel 2>&1 || {
+                    echo "[!] zypper install failed, trying with --no-gpg-checks..."
+                    sudo zypper --no-gpg-checks install -y nmap curl python3-pip nikto git unzip python3-devel libffi-devel libopenssl-devel || true
                 }
             else
                 echo "[*] Refreshing zypper repositories..."
                 sudo zypper refresh -f -q 2>/dev/null || echo "[!] Warning: Repository refresh had issues, continuing anyway..."
                 sudo zypper install -y nmap curl python3-pip nikto git unzip python3-devel libffi-devel libopenssl-devel 2>&1 || {
-                    echo "[!] zypper install failed, trying with --no-gpg-check..."
-                    sudo zypper --no-gpg-check install -y nmap curl python3-pip nikto git unzip python3-devel libffi-devel libopenssl-devel || true
+                    echo "[!] zypper install failed, trying with --no-gpg-checks..."
+                    sudo zypper --no-gpg-checks install -y nmap curl python3-pip nikto git unzip python3-devel libffi-devel libopenssl-devel || true
                 }
             fi
             ;;
@@ -150,7 +150,6 @@ if [ "$OFFLINE_MODE" = true ]; then
     pip3 install --no-index --find-links="$WHEEL_DIR" -r "$REQ_FILE"
 else
     if [ -n "$PROXY_URL" ]; then
-        pip3 install --proxy "[user:passwd@]proxy.server:port" -r "$REQ_FILE" || \
         pip3 install --proxy "$PROXY_URL" -r "$REQ_FILE"
     else
         pip3 install -r "$REQ_FILE"

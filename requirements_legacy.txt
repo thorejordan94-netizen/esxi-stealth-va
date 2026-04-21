@@ -1,5 +1,6 @@
 pyyaml>=6.0
-cryptography==3.4.8
-requests>=2.27.1
-jinja2>=3.0.3
-packaging>=21.3
+cryptography==40.0.2
+requests==2.27.1
+jinja2
+packaging
+dataclasses
