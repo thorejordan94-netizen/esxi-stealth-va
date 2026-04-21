@@ -79,18 +79,18 @@ if [ "$OFFLINE_MODE" = false ]; then
         sles|opensuse*)
             if [ -n "$PROXY_URL" ]; then
                 echo "[*] Configuring zypper with proxy..."
-                sudo zypper ar --no-gpgcheck --priority 100 "https://download.opensuse.org/distribution/leap/15.6/repo/oss/" "OSS-$RANDOM" 2>/dev/null || true
-                sudo zypper refresh -f -q 2>/dev/null || echo "[!] Warning: Repository refresh had issues, continuing anyway..."
-                sudo zypper install -y nmap curl python3-pip nikto git unzip python3-devel libffi-devel libopenssl-devel 2>&1 || {
+                sudo http_proxy="$PROXY_URL" https_proxy="$PROXY_URL" zypper ar --no-gpgcheck --priority 100 "https://download.opensuse.org/distribution/leap/15.6/repo/oss/" "OSS-$RANDOM" 2>/dev/null || true
+                sudo http_proxy="$PROXY_URL" https_proxy="$PROXY_URL" zypper refresh -f -q 2>/dev/null || echo "[!] Warning: Repository refresh had issues, continuing anyway..."
+                sudo http_proxy="$PROXY_URL" https_proxy="$PROXY_URL" zypper install -y nmap curl python311-pip python311 python3-pip nikto git unzip python3-devel libffi-devel libopenssl-devel 2>&1 || {
                     echo "[!] zypper install failed, trying with --no-gpg-checks..."
-                    sudo zypper --no-gpg-checks install -y nmap curl python3-pip nikto git unzip python3-devel libffi-devel libopenssl-devel || true
+                    sudo http_proxy="$PROXY_URL" https_proxy="$PROXY_URL" zypper --no-gpg-checks install -y nmap curl python311-pip python311 python3-pip nikto git unzip python3-devel libffi-devel libopenssl-devel || true
                 }
             else
                 echo "[*] Refreshing zypper repositories..."
                 sudo zypper refresh -f -q 2>/dev/null || echo "[!] Warning: Repository refresh had issues, continuing anyway..."
-                sudo zypper install -y nmap curl python3-pip nikto git unzip python3-devel libffi-devel libopenssl-devel 2>&1 || {
+                sudo zypper install -y nmap curl python311-pip python311 python3-pip nikto git unzip python3-devel libffi-devel libopenssl-devel 2>&1 || {
                     echo "[!] zypper install failed, trying with --no-gpg-checks..."
-                    sudo zypper --no-gpg-checks install -y nmap curl python3-pip nikto git unzip python3-devel libffi-devel libopenssl-devel || true
+                    sudo zypper --no-gpg-checks install -y nmap curl python311-pip python311 python3-pip nikto git unzip python3-devel libffi-devel libopenssl-devel || true
                 }
             fi
             ;;
@@ -147,12 +147,12 @@ fi
 
 if [ "$OFFLINE_MODE" = true ]; then
     echo "[*] Performing offline pip install from $WHEEL_DIR..."
-    pip3 install --no-index --find-links="$WHEEL_DIR" -r "$REQ_FILE"
+    python3 -m pip install --no-index --find-links="$WHEEL_DIR" -r "$REQ_FILE" --break-system-packages 2>/dev/null || python3 -m pip install --no-index --find-links="$WHEEL_DIR" -r "$REQ_FILE"
 else
     if [ -n "$PROXY_URL" ]; then
-        pip3 install --proxy "$PROXY_URL" -r "$REQ_FILE"
+        python3 -m pip install --proxy "$PROXY_URL" -r "$REQ_FILE" --break-system-packages 2>/dev/null || python3 -m pip install --proxy "$PROXY_URL" -r "$REQ_FILE"
     else
-        pip3 install -r "$REQ_FILE"
+        python3 -m pip install -r "$REQ_FILE" --break-system-packages 2>/dev/null || python3 -m pip install -r "$REQ_FILE"
     fi
 fi
 
@@ -179,10 +179,11 @@ echo "----------------------------------------------------------------------"
 
 echo "[*] Installing testssl.sh..."
 if [ ! -d "/usr/local/testssl.sh" ]; then
-    # Use the proxy to reach GitHub
-    git config --global http.proxy "http://192.168.157.6:8080/"
-    git clone --depth 1 https://github.com/drwetter/testssl.sh.git /usr/local/testssl.sh
-    ln -s /usr/local/testssl.sh/testssl.sh /usr/local/bin/testssl.sh
-    git config --global --unset http.proxy
+    if [ -n "$PROXY_URL" ]; then
+        sudo http_proxy="$PROXY_URL" https_proxy="$PROXY_URL" git clone --depth 1 https://github.com/drwetter/testssl.sh.git /usr/local/testssl.sh
+    else
+        sudo git clone --depth 1 https://github.com/drwetter/testssl.sh.git /usr/local/testssl.sh
+    fi
+    sudo ln -sf /usr/local/testssl.sh/testssl.sh /usr/local/bin/testssl.sh
 fi
 echo "[+] testssl.sh installed successfully."
