@@ -19,6 +19,7 @@ Stealth measures:
 import subprocess
 import shutil
 import logging
+import shlex
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -31,6 +32,10 @@ logger = logging.getLogger(__name__)
 
 
 class Phase2Discovery(PhasePlugin):
+
+    def __init__(self, stealth_config: Dict[str, Any] = None):
+        super().__init__(stealth_config)
+        self._last_nmap_error: str = ""
 
     @property
     def name(self) -> str:
@@ -53,23 +58,47 @@ class Phase2Discovery(PhasePlugin):
         """Execute an nmap command and capture XML output."""
         nmap_base = self._get_nmap_cmd()
         cmd_parts = nmap_base.split() + args + ["-oX", str(output_xml)]
+        cmd_str = shlex.join(cmd_parts)
+        self._last_nmap_error = ""
 
-        logger.info(f"Running: {' '.join(cmd_parts)}")
+        logger.info(f"Running: {cmd_str}")
         try:
             result = run_command(
                 cmd_parts,
                 capture_output=True, text=True, check=False,
                 timeout=timeout
             )
-            if result.returncode != 0 and not output_xml.exists():
-                logger.error(f"nmap failed: {result.stderr}")
+            if result.returncode != 0:
+                stderr = (result.stderr or "").strip()
+                logger.error(f"nmap command failed (rc={result.returncode}): {cmd_str}")
+                if stderr:
+                    logger.error(f"nmap stderr:\n{stderr}")
+                else:
+                    logger.error("nmap stderr: <empty>")
+
+                diag_hosts = 0
+                if output_xml.exists():
+                    try:
+                        tree = ET.parse(output_xml)
+                        diag_hosts = len(tree.getroot().findall("host"))
+                    except Exception as parse_err:
+                        logger.warning(
+                            f"Failed to parse nmap XML diagnostics from {output_xml}: {parse_err}"
+                        )
+
+                self._last_nmap_error = (
+                    f"nmap failed (rc={result.returncode}) command='{cmd_str}' "
+                    f"xml_present={output_xml.exists()} xml_hosts={diag_hosts}"
+                )
                 return False
             return True
         except FileNotFoundError:
-            logger.error("nmap executable not found.")
+            self._last_nmap_error = f"nmap executable not found for command='{cmd_str}'"
+            logger.error(self._last_nmap_error)
             return False
         except subprocess.TimeoutExpired:
-            logger.error(f"nmap timed out after {timeout}s")
+            self._last_nmap_error = f"nmap timed out after {timeout}s for command='{cmd_str}'"
+            logger.error(self._last_nmap_error)
             return False
 
     def _parse_nmap_xml(self, xml_path: Path) -> List[HostFinding]:
@@ -142,7 +171,7 @@ class Phase2Discovery(PhasePlugin):
         return findings
 
     def _sweep_subnet(self, subnet: str, exclude_ips: List[str],
-                      stealth: Dict[str, Any], output_dir: Path) -> List[str]:
+                      stealth: Dict[str, Any], output_dir: Path) -> Optional[List[str]]:
         """
         Perform a gentle host discovery sweep on a subnet.
         Returns list of discovered live IPs.
@@ -166,7 +195,7 @@ class Phase2Discovery(PhasePlugin):
 
         logger.info(f"Sweeping subnet {subnet} for live hosts...")
         if not self._run_nmap(args, xml_out, timeout=300):
-            return []
+            return None
 
         # Parse discovered hosts
         live_ips = []
@@ -231,7 +260,8 @@ class Phase2Discovery(PhasePlugin):
                 logger.info(f"  ESXi host: {h.host} — {len(h.ports)} open ports")
         else:
             report.add_error("phase2_discovery", "nmap",
-                f"Failed to scan primary target {target_ip}")
+                f"Failed to scan primary target {target_ip}: "
+                f"{self._last_nmap_error or 'unknown nmap error'}")
 
         self.stealth_delay("network")
 
@@ -248,6 +278,14 @@ class Phase2Discovery(PhasePlugin):
             for subnet in subnets:
                 ips = self._sweep_subnet(subnet, exclude, stealth_cfg,
                                           output_dir / "sweep")
+                if ips is None:
+                    report.add_error(
+                        "phase2_discovery",
+                        "nmap_sweep",
+                        f"Failed subnet sweep for {subnet}: "
+                        f"{self._last_nmap_error or 'unknown nmap error'}",
+                    )
+                    continue
                 discovered_ips.extend(ips)
                 self.stealth_delay("network")
 
