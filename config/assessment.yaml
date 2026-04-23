@@ -67,6 +67,12 @@ scan:
   # Service version detection intensity (0-9, lower = quieter)
   version_intensity: 2
 
+# --- Optional Stealth Overrides ---
+# Optional scan interface for nmap (-e). Leave empty for route-based autodetection.
+stealth:
+  network:
+    interface: ""
+
 # --- TLS / Crypto Settings ---
 crypto:
   # Ports to automatically check for TLS (additional HTTPS ports detected dynamically)
