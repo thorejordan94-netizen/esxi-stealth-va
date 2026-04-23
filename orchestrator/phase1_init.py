@@ -73,6 +73,8 @@ class Phase1Init(PhasePlugin):
     def _install_missing_tools(self, tools: Dict[str, bool]) -> Dict[str, bool]:
         """Attempt to install missing tools automatically on Linux systems."""
         import platform
+        install_timeout_seconds = 180
+        noninteractive_env = {"DEBIAN_FRONTEND": "noninteractive"}
         if platform.system() != "Linux":
             logger.warning("Automatic tool installation only supported on Linux. Please install tools manually.")
             return {tool: False for tool in tools}
@@ -96,7 +98,14 @@ class Phase1Init(PhasePlugin):
 
         if pkg_mgr in ("apt-get", "apt"):
             try:
-                run_command(privilege_prefix + [pkg_mgr, "update"], check=True, capture_output=True, text=True)
+                run_command(
+                    privilege_prefix + [pkg_mgr, "update"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    env=noninteractive_env,
+                )
             except Exception as e:
                 logger.warning(f"Package metadata update failed via {pkg_mgr}: {e}")
 
@@ -111,15 +120,36 @@ class Phase1Init(PhasePlugin):
                 if tool == "nmap":
                     if not pkg_mgr:
                         raise RuntimeError("No supported package manager found for nmap installation")
-                    run_command(privilege_prefix + [pkg_mgr, "install", "-y", "nmap"], check=True, capture_output=True, text=True)
+                    run_command(
+                        privilege_prefix + [pkg_mgr, "install", "-y", "nmap"],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=install_timeout_seconds,
+                        env=noninteractive_env,
+                    )
                 elif tool == "curl":
                     if not pkg_mgr:
                         raise RuntimeError("No supported package manager found for curl installation")
-                    run_command(privilege_prefix + [pkg_mgr, "install", "-y", "curl"], check=True, capture_output=True, text=True)
+                    run_command(
+                        privilege_prefix + [pkg_mgr, "install", "-y", "curl"],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=install_timeout_seconds,
+                        env=noninteractive_env,
+                    )
                 elif tool == "nikto":
                     if not pkg_mgr:
                         raise RuntimeError("No supported package manager found for nikto installation")
-                    run_command(privilege_prefix + [pkg_mgr, "install", "-y", "nikto"], check=True, capture_output=True, text=True)
+                    run_command(
+                        privilege_prefix + [pkg_mgr, "install", "-y", "nikto"],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=install_timeout_seconds,
+                        env=noninteractive_env,
+                    )
                 elif tool == "nuclei":
                     # Download nuclei binary
                     import urllib.request
@@ -164,6 +194,9 @@ class Phase1Init(PhasePlugin):
                     logger.error(f"  ✗ Failed to install {tool}")
                     installed[tool] = False
 
+            except subprocess.TimeoutExpired:
+                logger.error(f"  ✗ Installation of {tool} timed out after {install_timeout_seconds}s")
+                installed[tool] = False
             except subprocess.CalledProcessError as e:
                 logger.error(f"  ✗ Installation of {tool} failed: {e}")
                 installed[tool] = False
