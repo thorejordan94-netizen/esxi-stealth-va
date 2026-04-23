@@ -22,6 +22,13 @@ def run_command(cmd: Sequence[str], capture_output: bool = False,
     """
     kwargs = dict(kwargs)
 
+    # Strip proxy variables from the environment to prevent Nmap/other tools
+    # from routing local subnet traffic to the corporate internet proxy.
+    env = kwargs.get("env", os.environ).copy()
+    for proxy_var in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"]:
+        env.pop(proxy_var, None)
+    kwargs["env"] = env
+
     if capture_output:
         kwargs.setdefault("stdout", subprocess.PIPE)
         kwargs.setdefault("stderr", subprocess.PIPE)

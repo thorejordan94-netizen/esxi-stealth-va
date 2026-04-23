@@ -54,7 +54,7 @@ def scan_network_for_https(subnet="192.168.157.0/24"):
         logging.error(f"[!] Nmap is not available. Cannot scan {subnet}.")
         return []
 
-    nmap_cmd = nmap_base + ["-p", "443", "--open", "-oG", "-", subnet]
+    nmap_cmd = nmap_base + ["-Pn", "-p", "443", "--open", "-oG", "-", subnet]
     try:
         result = run_command(
             nmap_cmd,

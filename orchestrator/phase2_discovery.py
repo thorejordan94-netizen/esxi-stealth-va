@@ -154,6 +154,7 @@ class Phase2Discovery(PhasePlugin):
         # Falls back to ICMP ping if ARP is not possible (different subnet)
         args = [
             "-sn",  # Ping scan — no port scanning
+            "-e", "ens224",  # Force correct interface for 10.251.2.x subnet
             "--max-rate", str(stealth.get("network", {}).get("max_rate_pps", 100)),
             "-T2",  # Polite timing
             subnet,
@@ -196,6 +197,8 @@ class Phase2Discovery(PhasePlugin):
         # --- Build common nmap flags ---
         common_flags = [
             "-sT",  # Full TCP connect (no raw packets → no IDS SYN signature)
+            "-Pn",  # Treat all hosts as online (bypasses firewall dropping ping)
+            "-e", "ens224",  # Force correct interface
             f"--max-rate", str(net_cfg.get("max_rate_pps", 100)),
             f"--scan-delay", f"{net_cfg.get('scan_delay_ms', 50)}ms",
             f"-T{net_cfg.get('timing_template', 2)}",
@@ -216,7 +219,6 @@ class Phase2Discovery(PhasePlugin):
         esxi_xml = output_dir / "nmap" / "esxi_host.xml"
         esxi_args = common_flags + [
             "-p", f"{esxi_ports},{ports_spec}" if esxi_ports else ports_spec,
-            "-O",  # OS detection (gentle with -T2)
             target_ip,
         ]
 
