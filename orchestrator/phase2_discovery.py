@@ -104,12 +104,8 @@ class Phase2Discovery(PhasePlugin):
             logger.error("Configured interface '%s' does not exist.", explicit_interface)
             return None
 
-        autodetected = self._detect_interface_for_destination(destination)
-        if autodetected:
-            logger.info("Autodetected scan interface for %s: %s", destination, autodetected)
-            return autodetected
-
-        logger.info("No scan interface selected for %s; nmap will use OS default routing.", destination)
+        # Let Nmap handle its own routing instead of trying to guess
+        logger.info("No explicit scan interface configured for %s; nmap will use OS default routing.", destination)
         return None
 
     @property

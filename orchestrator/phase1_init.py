@@ -101,6 +101,12 @@ class Phase1Init(PhasePlugin):
             "APT_LISTCHANGES_FRONTEND": "none",
         }
 
+        pkg_install_flags = ["install", "-y"]
+        if pkg_mgr == "zypper":
+            pkg_install_flags = ["--non-interactive", "install", "-y"]
+        elif pkg_mgr == "yum":
+            pkg_install_flags = ["install", "-y"]
+
         if pkg_mgr in ("apt-get", "apt"):
             try:
                 run_command(
@@ -126,7 +132,7 @@ class Phase1Init(PhasePlugin):
                     if not pkg_mgr:
                         raise RuntimeError("No supported package manager found for nmap installation")
                     run_command(
-                        privilege_prefix + [pkg_mgr, "install", "-y", "nmap"],
+                        privilege_prefix + [pkg_mgr] + pkg_install_flags + ["nmap"],
                         check=True,
                         capture_output=True,
                         text=True,
@@ -137,7 +143,7 @@ class Phase1Init(PhasePlugin):
                     if not pkg_mgr:
                         raise RuntimeError("No supported package manager found for curl installation")
                     run_command(
-                        privilege_prefix + [pkg_mgr, "install", "-y", "curl"],
+                        privilege_prefix + [pkg_mgr] + pkg_install_flags + ["curl"],
                         check=True,
                         capture_output=True,
                         text=True,
@@ -148,7 +154,7 @@ class Phase1Init(PhasePlugin):
                     if not pkg_mgr:
                         raise RuntimeError("No supported package manager found for nikto installation")
                     run_command(
-                        privilege_prefix + [pkg_mgr, "install", "-y", "nikto"],
+                        privilege_prefix + [pkg_mgr] + pkg_install_flags + ["nikto"],
                         check=True,
                         capture_output=True,
                         text=True,

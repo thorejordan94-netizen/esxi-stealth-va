@@ -164,7 +164,7 @@ class Phase0Update(PhasePlugin):
         elif pkg_mgr == "zypper":
             for tool in ["nmap", "nikto", "curl"]:
                 success, stdout, stderr = self._run_cmd(
-                    privilege_prefix + ["zypper", "install", "-y", tool],
+                    privilege_prefix + ["zypper", "--non-interactive", "install", "-y", tool],
                     timeout=120,
                 )
                 if success:
