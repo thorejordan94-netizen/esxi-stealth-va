@@ -21,6 +21,7 @@ import shutil
 import logging
 import xml.etree.ElementTree as ET
 import ipaddress
+import re
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
@@ -32,6 +33,9 @@ logger = logging.getLogger(__name__)
 
 
 class Phase2Discovery(PhasePlugin):
+    _TOP_PORTS_PATTERN = re.compile(r"^\s*top-(\d+)\s*$", re.IGNORECASE)
+    _PORT_LIST_PATTERN = re.compile(r"^[0-9,\-\s]+$")
+
     def _interface_exists(self, interface: str) -> bool:
         """Return True when the requested network interface exists."""
         if shutil.which("ip"):
@@ -221,6 +225,63 @@ class Phase2Discovery(PhasePlugin):
 
         return findings
 
+    def _build_port_args(self, configured_value: str) -> List[str]:
+        """
+        Convert configured ports value into valid nmap CLI arguments.
+
+        Accepted forms:
+        - top-N (e.g., top-1000) => ['--top-ports', '1000']
+        - explicit list/range (e.g., 80,443,1-1024) => ['-p', '80,443,1-1024']
+        """
+        value = str(configured_value or "").strip()
+        if not value:
+            value = "top-1000"
+
+        top_match = self._TOP_PORTS_PATTERN.fullmatch(value)
+        if top_match:
+            return ["--top-ports", top_match.group(1)]
+
+        if self._PORT_LIST_PATTERN.fullmatch(value):
+            normalized = "".join(value.split())
+            return ["-p", normalized]
+
+        logger.warning(
+            "Unsupported scan.ports value '%s'. Falling back to top-1000.",
+            configured_value
+        )
+        return ["--top-ports", "1000"]
+
+    def _merge_host_findings(self, findings: List[HostFinding]) -> List[HostFinding]:
+        """Merge host findings by IP and deduplicate open ports."""
+        merged: Dict[str, HostFinding] = {}
+        for finding in findings:
+            existing = merged.get(finding.host)
+            if not existing:
+                merged[finding.host] = HostFinding(
+                    host=finding.host,
+                    hostname=finding.hostname,
+                    role=finding.role,
+                    ports=list(finding.ports),
+                    os_fingerprint=finding.os_fingerprint,
+                )
+                continue
+
+            if not existing.hostname and finding.hostname:
+                existing.hostname = finding.hostname
+            if not existing.os_fingerprint and finding.os_fingerprint:
+                existing.os_fingerprint = finding.os_fingerprint
+            if not existing.role and finding.role:
+                existing.role = finding.role
+
+            known_ports = {(p.port, p.protocol): p for p in existing.ports}
+            for port in finding.ports:
+                key = (port.port, port.protocol)
+                if key not in known_ports:
+                    existing.ports.append(port)
+                    known_ports[key] = port
+
+        return list(merged.values())
+
     def _sweep_subnet(self, subnet: str, exclude_ips: List[str],
                       stealth: Dict[str, Any], output_dir: Path,
                       explicit_interface: Optional[str] = None) -> List[str]:
@@ -310,15 +371,33 @@ class Phase2Discovery(PhasePlugin):
         self.log_for_cyberark(f"Scanning primary target: {target_ip}")
         logger.info(f"Scanning ESXi host: {target_ip} ({target_hostname})")
 
+        esxi_port_args = self._build_port_args(ports_spec)
         esxi_xml = output_dir / "nmap" / "esxi_host.xml"
-        esxi_args = common_flags + [
-            "-p", f"{esxi_ports},{ports_spec}" if esxi_ports else ports_spec,
-            target_ip,
-        ]
+        esxi_hosts: List[HostFinding] = []
 
-        if self._run_nmap(esxi_args, esxi_xml, timeout=900):
-            hosts = self._parse_nmap_xml(esxi_xml)
-            for h in hosts:
+        # If scan.ports is top-N and esxi_ports is explicit, run two passes and merge.
+        if esxi_ports and esxi_port_args[:1] == ["--top-ports"]:
+            explicit_esxi_args = common_flags + ["-p", "".join(str(esxi_ports).split()), target_ip]
+            explicit_esxi_xml = output_dir / "nmap" / "esxi_host_explicit.xml"
+            top_esxi_args = common_flags + esxi_port_args + [target_ip]
+
+            explicit_ok = self._run_nmap(explicit_esxi_args, explicit_esxi_xml, timeout=900)
+            top_ok = self._run_nmap(top_esxi_args, esxi_xml, timeout=900)
+
+            if explicit_ok:
+                esxi_hosts.extend(self._parse_nmap_xml(explicit_esxi_xml))
+            if top_ok:
+                esxi_hosts.extend(self._parse_nmap_xml(esxi_xml))
+        else:
+            selected_esxi_args = common_flags + (
+                ["-p", f"{''.join(str(esxi_ports).split())},{ports_spec}"]
+                if esxi_ports else esxi_port_args
+            ) + [target_ip]
+            if self._run_nmap(selected_esxi_args, esxi_xml, timeout=900):
+                esxi_hosts = self._parse_nmap_xml(esxi_xml)
+
+        if esxi_hosts:
+            for h in self._merge_host_findings(esxi_hosts):
                 h.hostname = target_hostname
                 h.role = "esxi_host"
                 report.add_host(h)
@@ -363,10 +442,7 @@ class Phase2Discovery(PhasePlugin):
             logger.info(f"Scanning VM [{i+1}/{len(discovered_ips)}]: {vm_ip}")
 
             vm_xml = output_dir / "nmap" / f"vm_{vm_ip.replace('.', '_')}.xml"
-            vm_args = common_flags + [
-                "-p", ports_spec,
-                vm_ip,
-            ]
+            vm_args = common_flags + self._build_port_args(ports_spec) + [vm_ip]
 
             if self._run_nmap(vm_args, vm_xml, timeout=600):
                 hosts = self._parse_nmap_xml(vm_xml)

@@ -60,9 +60,15 @@ phases:
 
 # --- Scan Settings ---
 scan:
-  # Port specification for host/VM scans
+  # Port specification for host/VM scans.
+  # Accepted forms:
+  #   - "top-N" (example: "top-1000") -> nmap --top-ports N
+  #   - Explicit list/range (example: "80,443,1-1024") -> nmap -p ...
   ports: "top-1000"
-  # ESXi-specific ports to always include
+  # ESXi-specific ports to always include (explicit list/range only).
+  # Example: "80,443,902,5989,8000,8080,9080"
+  # Note: When scan.ports uses "top-N", ESXi scanning runs in two passes
+  # (explicit ports + top-N) and results are merged.
   esxi_ports: "80,443,902,5989,8000,8080,9080"
   # Service version detection intensity (0-9, lower = quieter)
   version_intensity: 2

@@ -11,6 +11,9 @@ profiles:
   # --- Quick: Minimal footprint, fast execution (~15 min for /24) ---
   quick:
     description: "Fast scan with minimal footprint. Good for initial recon."
+    # Accepted forms:
+    #   - "top-N" (example: "top-100")
+    #   - Explicit list/range (example: "80,443,1-1024")
     ports: "top-100"
     version_intensity: 1
     nuclei_rate: 100
@@ -26,6 +29,9 @@ profiles:
   # --- Standard: Balanced coverage + stealth (~1-2 hours for /24) ---
   standard:
     description: "Balanced scan with good coverage and acceptable noise level."
+    # Accepted forms:
+    #   - "top-N" (example: "top-1000")
+    #   - Explicit list/range (example: "80,443,1-1024")
     ports: "top-1000"
     version_intensity: 2
     nuclei_rate: 50
@@ -40,6 +46,9 @@ profiles:
   # --- Thorough: Deep analysis, all ports (~4-8 hours for /24) ---
   thorough:
     description: "Exhaustive scan covering all TCP ports. Very slow, very noisy."
+    # Accepted forms:
+    #   - "top-N"
+    #   - Explicit list/range
     ports: "1-65535"
     version_intensity: 5
     nuclei_rate: 25
