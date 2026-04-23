@@ -19,6 +19,7 @@ Stealth measures:
 import subprocess
 import shutil
 import logging
+import shlex
 import xml.etree.ElementTree as ET
 import ipaddress
 from pathlib import Path
@@ -32,6 +33,12 @@ logger = logging.getLogger(__name__)
 
 
 class Phase2Discovery(PhasePlugin):
+    def __init__(self):
+        super().__init__()
+        self._last_nmap_command: str = ""
+        self._last_nmap_stderr: str = ""
+        self._last_nmap_stdout: str = ""
+
     def _interface_exists(self, interface: str) -> bool:
         """Return True when the requested network interface exists."""
         if shutil.which("ip"):
@@ -133,16 +140,41 @@ class Phase2Discovery(PhasePlugin):
         """Execute an nmap command and capture XML output."""
         nmap_base = self._get_nmap_cmd()
         cmd_parts = nmap_base.split() + args + ["-oX", str(output_xml)]
+        cmd_display = " ".join(shlex.quote(part) for part in cmd_parts)
 
-        logger.info(f"Running: {' '.join(cmd_parts)}")
+        self._last_nmap_command = cmd_display
+        self._last_nmap_stderr = ""
+        self._last_nmap_stdout = ""
+
+        logger.info(f"Running: {cmd_display}")
         try:
             result = run_command(
                 cmd_parts,
                 capture_output=True, text=True, check=False,
                 timeout=timeout
             )
-            if result.returncode != 0 and not output_xml.exists():
-                logger.error(f"nmap failed: {result.stderr}")
+            self._last_nmap_stderr = (result.stderr or "").strip()
+            self._last_nmap_stdout = (result.stdout or "").strip()
+
+            if result.returncode != 0:
+                logger.error(
+                    "nmap failed with rc=%s. command=%s stderr=%s stdout=%s",
+                    result.returncode,
+                    cmd_display,
+                    self._last_nmap_stderr,
+                    self._last_nmap_stdout,
+                )
+                # Parse XML only for diagnostics when available; non-zero return code is still a failure.
+                if output_xml.exists():
+                    try:
+                        parsed_hosts = self._parse_nmap_xml(output_xml)
+                        logger.warning(
+                            "nmap produced XML despite failure (rc=%s). Parsed %s host(s) for diagnostics only.",
+                            result.returncode,
+                            len(parsed_hosts),
+                        )
+                    except Exception as diag_err:
+                        logger.warning("Failed to parse diagnostic nmap XML %s: %s", output_xml, diag_err)
                 return False
             return True
         except FileNotFoundError:
@@ -325,7 +357,8 @@ class Phase2Discovery(PhasePlugin):
                 logger.info(f"  ESXi host: {h.host} — {len(h.ports)} open ports")
         else:
             report.add_error("phase2_discovery", "nmap",
-                f"Failed to scan primary target {target_ip}")
+                f"Failed to scan primary target {target_ip}. "
+                f"command={self._last_nmap_command}. stderr={self._last_nmap_stderr}")
 
         self.stealth_delay("network")
 
