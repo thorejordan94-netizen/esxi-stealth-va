@@ -344,6 +344,19 @@ class Phase2Discovery(PhasePlugin):
         ports_spec = scan_cfg.get("ports", "top-1000")
         esxi_ports = scan_cfg.get("esxi_ports", "")
 
+        def build_port_args(p_spec: str, e_ports: str) -> List[str]:
+            if not p_spec or p_spec.lower() == "none":
+                p_spec = ""
+            
+            if p_spec.startswith("top-"):
+                num = p_spec.split("-")[1]
+                if e_ports:
+                    return ["-p", e_ports, "--top-ports", num]
+                return ["--top-ports", num]
+            
+            combined = f"{e_ports},{p_spec}" if e_ports and p_spec else e_ports or p_spec
+            return ["-p", combined] if combined else []
+
         # =====================================================================
         # STEP 1: Scan primary ESXi host
         # =====================================================================
@@ -351,10 +364,7 @@ class Phase2Discovery(PhasePlugin):
         logger.info(f"Scanning ESXi host: {target_ip} ({target_hostname})")
 
         esxi_xml = output_dir / "nmap" / "esxi_host.xml"
-        esxi_args = common_flags + [
-            "-p", f"{esxi_ports},{ports_spec}" if esxi_ports else ports_spec,
-            target_ip,
-        ]
+        esxi_args = common_flags + build_port_args(ports_spec, esxi_ports) + [target_ip]
 
         if self._run_nmap(esxi_args, esxi_xml, timeout=900):
             hosts = self._parse_nmap_xml(esxi_xml)
@@ -404,10 +414,7 @@ class Phase2Discovery(PhasePlugin):
             logger.info(f"Scanning VM [{i+1}/{len(discovered_ips)}]: {vm_ip}")
 
             vm_xml = output_dir / "nmap" / f"vm_{vm_ip.replace('.', '_')}.xml"
-            vm_args = common_flags + [
-                "-p", ports_spec,
-                vm_ip,
-            ]
+            vm_args = common_flags + build_port_args(ports_spec, "") + [vm_ip]
 
             if self._run_nmap(vm_args, vm_xml, timeout=600):
                 hosts = self._parse_nmap_xml(vm_xml)
