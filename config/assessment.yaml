@@ -32,6 +32,18 @@ vm_discovery:
     - "10.251.2.255"    # Broadcast
   # If method=static, list VM IPs here instead:
   static_ips: []
+  # Optional host-discovery probe tuning for harder-to-ping networks.
+  # Conservative default: disabled (pure ping/ARP only).
+  discovery_probes:
+    enabled: false
+    # fallback = only retry with probes when ping sweep finds nothing
+    # always   = run ping + probe discovery and merge both results
+    mode: "fallback"
+    # Optional nmap ping probes (examples):
+    #   ps_ports: "22,80,443"  -> adds -PS22,80,443
+    #   pa_ports: "80,443"     -> adds -PA80,443
+    ps_ports: ""
+    pa_ports: ""
   # Known VM names for correlation (optional — enriches report)
   known_vms:
     - "v268tmp"
