@@ -20,6 +20,7 @@ import subprocess
 import shutil
 import logging
 import xml.etree.ElementTree as ET
+import ipaddress
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
@@ -31,6 +32,85 @@ logger = logging.getLogger(__name__)
 
 
 class Phase2Discovery(PhasePlugin):
+    def _interface_exists(self, interface: str) -> bool:
+        """Return True when the requested network interface exists."""
+        if shutil.which("ip"):
+            result = run_command(
+                ["ip", "link", "show", interface],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            return result.returncode == 0
+
+        if shutil.which("ifconfig"):
+            result = run_command(
+                ["ifconfig", interface],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            return result.returncode == 0
+
+        logger.warning(
+            "Cannot validate interface '%s' because neither 'ip' nor 'ifconfig' is available.",
+            interface
+        )
+        return True
+
+    def _detect_interface_for_destination(self, destination: str) -> Optional[str]:
+        """Autodetect interface using route lookup for destination IP."""
+        if not shutil.which("ip"):
+            logger.warning("Route-based interface autodetection unavailable: 'ip' not found.")
+            return None
+
+        result = run_command(
+            ["ip", "route", "get", destination],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            logger.warning(
+                "Failed route lookup for %s (rc=%s): %s",
+                destination,
+                result.returncode,
+                (result.stderr or "").strip(),
+            )
+            return None
+
+        tokens = (result.stdout or "").split()
+        if "dev" not in tokens:
+            logger.warning("Route lookup did not include an interface for %s.", destination)
+            return None
+
+        dev_idx = tokens.index("dev")
+        if dev_idx + 1 >= len(tokens):
+            logger.warning("Route lookup output malformed for %s: %s", destination, result.stdout)
+            return None
+        return tokens[dev_idx + 1]
+
+    def _resolve_interface(self, explicit_interface: Optional[str], destination: str) -> Optional[str]:
+        """
+        Determine which interface to pass to nmap.
+        Preference:
+        1) Explicit configured interface (validated)
+        2) Route-based autodetected interface
+        """
+        if explicit_interface:
+            if self._interface_exists(explicit_interface):
+                logger.info("Using configured scan interface: %s", explicit_interface)
+                return explicit_interface
+            logger.error("Configured interface '%s' does not exist.", explicit_interface)
+            return None
+
+        autodetected = self._detect_interface_for_destination(destination)
+        if autodetected:
+            logger.info("Autodetected scan interface for %s: %s", destination, autodetected)
+            return autodetected
+
+        logger.info("No scan interface selected for %s; nmap will use OS default routing.", destination)
+        return None
 
     @property
     def name(self) -> str:
@@ -142,7 +222,8 @@ class Phase2Discovery(PhasePlugin):
         return findings
 
     def _sweep_subnet(self, subnet: str, exclude_ips: List[str],
-                      stealth: Dict[str, Any], output_dir: Path) -> List[str]:
+                      stealth: Dict[str, Any], output_dir: Path,
+                      explicit_interface: Optional[str] = None) -> List[str]:
         """
         Perform a gentle host discovery sweep on a subnet.
         Returns list of discovered live IPs.
@@ -154,11 +235,19 @@ class Phase2Discovery(PhasePlugin):
         # Falls back to ICMP ping if ARP is not possible (different subnet)
         args = [
             "-sn",  # Ping scan — no port scanning
-            "-e", "ens224",  # Force correct interface for 10.251.2.x subnet
             "--max-rate", str(stealth.get("network", {}).get("max_rate_pps", 100)),
             "-T2",  # Polite timing
             subnet,
         ]
+        try:
+            destination = str(ipaddress.ip_network(subnet, strict=False).network_address + 1)
+        except ValueError:
+            logger.warning("Invalid subnet '%s' for interface autodetection; using target subnet literal.", subnet)
+            destination = subnet.split("/", 1)[0]
+
+        sweep_interface = self._resolve_interface(explicit_interface, destination)
+        if sweep_interface:
+            args[1:1] = ["-e", sweep_interface]
 
         # Exclude IPs
         if exclude_ips:
@@ -188,17 +277,20 @@ class Phase2Discovery(PhasePlugin):
         assessment_cfg = config.get("assessment", {})
         stealth_cfg = config.get("stealth", {})
         net_cfg = stealth_cfg.get("network", {})
+        net_override_cfg = assessment_cfg.get("stealth", {}).get("network", {})
         scan_cfg = assessment_cfg.get("scan", {})
 
         output_dir = Path("output")
         target_ip = assessment_cfg.get("target", {}).get("ip", "")
         target_hostname = assessment_cfg.get("target", {}).get("hostname", "")
 
+        configured_interface = net_override_cfg.get("interface", net_cfg.get("interface", ""))
+        interface = self._resolve_interface(configured_interface, target_ip) if target_ip else None
+
         # --- Build common nmap flags ---
         common_flags = [
             "-sT",  # Full TCP connect (no raw packets → no IDS SYN signature)
             "-Pn",  # Treat all hosts as online (bypasses firewall dropping ping)
-            "-e", "ens224",  # Force correct interface
             f"--max-rate", str(net_cfg.get("max_rate_pps", 100)),
             f"--scan-delay", f"{net_cfg.get('scan_delay_ms', 50)}ms",
             f"-T{net_cfg.get('timing_template', 2)}",
@@ -206,6 +298,8 @@ class Phase2Discovery(PhasePlugin):
             f"--version-intensity", str(scan_cfg.get("version_intensity", 2)),
             "--open",  # Only show open ports
         ]
+        if interface:
+            common_flags[2:2] = ["-e", interface]
 
         ports_spec = scan_cfg.get("ports", "top-1000")
         esxi_ports = scan_cfg.get("esxi_ports", "")
@@ -247,7 +341,8 @@ class Phase2Discovery(PhasePlugin):
 
             for subnet in subnets:
                 ips = self._sweep_subnet(subnet, exclude, stealth_cfg,
-                                          output_dir / "sweep")
+                                          output_dir / "sweep",
+                                          explicit_interface=configured_interface)
                 discovered_ips.extend(ips)
                 self.stealth_delay("network")
 
