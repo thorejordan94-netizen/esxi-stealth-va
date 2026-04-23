@@ -23,6 +23,7 @@ from typing import Dict, Any, List, Optional
 
 from orchestrator.core.plugin import PhasePlugin
 from orchestrator.models import AssessmentReport, VulnerabilityFinding
+from orchestrator.runtime import run_command
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +38,21 @@ class Phase6VulnScan(PhasePlugin):
     def phase_number(self) -> int:
         return 6
 
-    def _get_nuclei_cmd(self) -> Optional[str]:
+    def _get_nuclei_cmd(self) -> Optional[List[str]]:
         """Find nuclei binary."""
-        return shutil.which("nuclei")
+        nuclei_path = shutil.which("nuclei")
+        if nuclei_path:
+            return [nuclei_path]
+
+        if shutil.which("wsl"):
+            try:
+                result = run_command(["wsl", "which", "nuclei"], capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    return ["wsl", "nuclei"]
+            except Exception:
+                pass
+
+        return None
 
     def _prepare_targets(self, report: AssessmentReport) -> Optional[Path]:
         """Create a temporary file containing all web targets for Nuclei."""
@@ -114,8 +127,8 @@ class Phase6VulnScan(PhasePlugin):
             logger.info("Nuclei scanning disabled in config.")
             return
 
-        nuclei_bin = self._get_nuclei_cmd()
-        if not nuclei_bin:
+        nuclei_cmd = self._get_nuclei_cmd()
+        if not nuclei_cmd:
             report.add_error("phase6_vulnscan", "nuclei", "Nuclei binary not found in PATH")
             return
 
@@ -128,8 +141,7 @@ class Phase6VulnScan(PhasePlugin):
         output_file.parent.mkdir(parents=True, exist_ok=True)
 
         # Build command
-        cmd = [
-            nuclei_bin,
+        cmd = nuclei_cmd + [
             "-l", str(target_file),
             "-jsonl",
             "-o", str(output_file),
@@ -161,7 +173,9 @@ class Phase6VulnScan(PhasePlugin):
         try:
             # We don't use check=True because Nuclei might exit with non-zero if findings found (depending on version)
             # or if some templates fail. We rely on the output file.
-            subprocess.run(cmd, capture_output=True, timeout=3600) # 1 hour timeout
+            if output_file.exists():
+                output_file.unlink()
+            run_command(cmd, capture_output=True, text=True, timeout=3600) # 1 hour timeout
             
             findings = self._parse_nuclei_jsonl(output_file)
             for f in findings:

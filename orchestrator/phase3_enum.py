@@ -25,6 +25,7 @@ from typing import Dict, Any, List
 
 from orchestrator.core.plugin import PhasePlugin
 from orchestrator.models import AssessmentReport, HostFinding, PortEntry
+from orchestrator.runtime import run_command
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ class Phase3Enum(PhasePlugin):
 
         logger.info(f"Deep enum: {host} ports [{port_str}]")
         try:
-            result = subprocess.run(
+            result = run_command(
                 cmd_parts, capture_output=True, text=True,
                 check=False, timeout=300
             )

@@ -25,6 +25,7 @@ from typing import Dict, Any, List, Optional
 
 from orchestrator.core.plugin import PhasePlugin
 from orchestrator.models import AssessmentReport, HostFinding, PortEntry
+from orchestrator.runtime import run_command
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ class Phase2Discovery(PhasePlugin):
 
         logger.info(f"Running: {' '.join(cmd_parts)}")
         try:
-            result = subprocess.run(
+            result = run_command(
                 cmd_parts,
                 capture_output=True, text=True, check=False,
                 timeout=timeout

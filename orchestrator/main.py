@@ -46,6 +46,18 @@ from orchestrator.phase7_delta import Phase7Delta
 logger = logging.getLogger(__name__)
 
 
+PHASE_TOGGLE_NAMES = {
+    0: "phase0_update",
+    1: "phase1_init",
+    2: "phase2_discovery",
+    3: "phase3_enum",
+    4: "phase4_crypto",
+    5: "phase5_web",
+    6: "phase6_vulnscan",
+    7: "phase7_delta",
+}
+
+
 def setup_logging(log_dir: Path):
     """Configure dual logging: file + console."""
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -102,6 +114,69 @@ def load_config(config_dir: Path) -> Dict[str, Any]:
     return config
 
 
+def apply_scan_profile(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Overlay the active scan profile onto the base config."""
+    scan_profile = config.get("scan_profile", {})
+    active_name = scan_profile.get("active_profile", "standard")
+    profile = scan_profile.get("profiles", {}).get(active_name, {})
+    if not profile:
+        logger.warning(f"Scan profile '{active_name}' not found. Using base config values.")
+        return config
+
+    assessment_cfg = config.setdefault("assessment", {})
+    stealth_cfg = config.setdefault("stealth", {})
+
+    scan_cfg = assessment_cfg.setdefault("scan", {})
+    web_cfg = assessment_cfg.setdefault("web", {})
+    nuclei_cfg = assessment_cfg.setdefault("nuclei", {})
+    ssllabs_cfg = assessment_cfg.setdefault("ssllabs", {})
+    network_cfg = stealth_cfg.setdefault("network", {})
+    http_cfg = stealth_cfg.setdefault("http", {})
+
+    if profile.get("ports"):
+        scan_cfg["ports"] = profile["ports"]
+    if profile.get("version_intensity") is not None:
+        scan_cfg["version_intensity"] = profile["version_intensity"]
+    if profile.get("nuclei_rate") is not None:
+        nuclei_cfg["rate_limit"] = profile["nuclei_rate"]
+    if profile.get("nuclei_concurrency") is not None:
+        nuclei_cfg["concurrency"] = profile["nuclei_concurrency"]
+    if profile.get("nuclei_severity"):
+        nuclei_cfg["severity_filter"] = profile["nuclei_severity"]
+    if profile.get("max_rate_pps") is not None:
+        network_cfg["max_rate_pps"] = profile["max_rate_pps"]
+    if profile.get("scan_delay_ms") is not None:
+        network_cfg["scan_delay_ms"] = profile["scan_delay_ms"]
+    if profile.get("http_request_delay_s") is not None:
+        http_cfg["request_delay_s"] = profile["http_request_delay_s"]
+
+    if "skip_nikto" in profile:
+        web_cfg["use_nikto"] = web_cfg.get("use_nikto", True) and not profile["skip_nikto"]
+    if "skip_ssllabs" in profile:
+        ssllabs_cfg["enabled"] = ssllabs_cfg.get("enabled", False) and not profile["skip_ssllabs"]
+
+    logger.info(f"Applied scan profile '{active_name}'")
+    return config
+
+
+def is_phase_enabled(config: Dict[str, Any], phase_number: int) -> bool:
+    """Return whether a phase is enabled in config."""
+    phase_key = PHASE_TOGGLE_NAMES.get(phase_number)
+    if phase_key is None:
+        return True
+
+    phases_cfg = config.get("assessment", {}).get("phases", {})
+    return phases_cfg.get(phase_key, True)
+
+
+def determine_default_start_phase(config: Dict[str, Any]) -> int:
+    """Choose the earliest enabled phase when the user does not override it."""
+    for phase_number in range(0, 8):
+        if is_phase_enabled(config, phase_number):
+            return phase_number
+    return 1
+
+
 def run_pipeline(config: Dict[str, Any],
                  start_phase: int = 1,
                  mock_mode: bool = False,
@@ -121,6 +196,7 @@ def run_pipeline(config: Dict[str, Any],
         logger.info("║  MOCK MODE — No real scans will be executed  ║")
         logger.info("╚══════════════════════════════════════════════╝")
 
+    apply_scan_profile(config)
     stealth_cfg = config.get("stealth", {})
 
     # --- Initialize the report model ---
@@ -158,6 +234,9 @@ def run_pipeline(config: Dict[str, Any],
 
     # --- Execute phases ---
     for phase in phases:
+        if not is_phase_enabled(config, phase.phase_number):
+            logger.info(f"Skipping Phase {phase.phase_number} ({phase.name}) - disabled in config")
+            continue
         if phase.phase_number < start_phase:
             logger.info(f"Skipping Phase {phase.phase_number} ({phase.name}) — resuming from {start_phase}")
             continue
@@ -195,6 +274,10 @@ def run_pipeline(config: Dict[str, Any],
 
     # --- Final Generation ---
     if not dry_run:
+        report.set_finished()
+        report.flush_to_disk(str(state_file))
+        final_report = Path("output") / "assessment_report.json"
+        report.flush_to_disk(str(final_report))
         try:
             from orchestrator.report_html import generate_report
             html_path = Path("output") / "assessment_report.html"

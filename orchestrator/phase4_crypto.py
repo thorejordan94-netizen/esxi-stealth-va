@@ -38,6 +38,7 @@ from orchestrator.core.plugin import PhasePlugin
 from orchestrator.models import (
     AssessmentReport, CryptoFinding, CertificateInfo, SSLLabsResult
 )
+from orchestrator.runtime import run_command
 
 logger = logging.getLogger(__name__)
 
@@ -291,12 +292,12 @@ class Phase4Crypto(PhasePlugin):
             return "testssl"
         if shutil.which("wsl"):
             try:
-                r = subprocess.run(["wsl", "which", "testssl.sh"],
-                                   capture_output=True, text=True, timeout=5)
+                r = run_command(["wsl", "which", "testssl.sh"],
+                                capture_output=True, text=True, timeout=5)
                 if r.returncode == 0:
                     return "wsl testssl.sh"
-                r = subprocess.run(["wsl", "which", "testssl"],
-                                   capture_output=True, text=True, timeout=5)
+                r = run_command(["wsl", "which", "testssl"],
+                                capture_output=True, text=True, timeout=5)
                 if r.returncode == 0:
                     return "wsl testssl"
             except Exception:
@@ -304,8 +305,8 @@ class Phase4Crypto(PhasePlugin):
         git_bash = shutil.which("bash")
         if git_bash:
             try:
-                r = subprocess.run([git_bash, "-c", "which testssl.sh"],
-                                   capture_output=True, text=True, timeout=5)
+                r = run_command([git_bash, "-c", "which testssl.sh"],
+                                capture_output=True, text=True, timeout=5)
                 if r.returncode == 0:
                     return f"{git_bash} -c testssl.sh"
             except Exception:
@@ -325,6 +326,8 @@ class Phase4Crypto(PhasePlugin):
 
         tls_cfg = stealth_cfg.get("tls", {})
         json_out = output_dir / f"testssl_{host.replace('.', '_')}_{port}.json"
+        if json_out.exists():
+            json_out.unlink()
 
         cmd_parts = testssl_cmd.split() + [
             "--quiet",
@@ -338,7 +341,7 @@ class Phase4Crypto(PhasePlugin):
 
         logger.info(f"Running testssl.sh against {host}:{port}...")
         try:
-            result = subprocess.run(
+            result = run_command(
                 cmd_parts,
                 capture_output=True, text=True, check=False, timeout=300
             )
@@ -487,30 +490,53 @@ class Phase4Crypto(PhasePlugin):
             vulnerabilities.append(f"Connection error: {e}")
 
         # --- Check TLS protocol versions ---
-        protocol_map = {
-            "TLS_1.0": getattr(ssl.TLSVersion, 'TLSv1', None),
-            "TLS_1.1": getattr(ssl.TLSVersion, 'TLSv1_1', None),
-            "TLS_1.2": ssl.TLSVersion.TLSv1_2,
-            "TLS_1.3": ssl.TLSVersion.TLSv1_3,
-        }
+        if hasattr(ssl, "TLSVersion"):
+            protocol_map = {
+                "TLS_1.0": getattr(ssl.TLSVersion, "TLSv1", None),
+                "TLS_1.1": getattr(ssl.TLSVersion, "TLSv1_1", None),
+                "TLS_1.2": getattr(ssl.TLSVersion, "TLSv1_2", None),
+                "TLS_1.3": getattr(ssl.TLSVersion, "TLSv1_3", None),
+            }
 
-        for ver_name, ver_const in protocol_map.items():
-            if ver_const is None:
-                continue
-            try:
-                ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-                ctx.check_hostname = False
-                ctx.verify_mode = ssl.CERT_NONE
-                ctx.minimum_version = ver_const
-                ctx.maximum_version = ver_const
-                with socket.create_connection((host, port), timeout=5) as sock:
-                    with ctx.wrap_socket(sock, server_hostname=host) as ssock:
-                        tls_versions[ver_name] = True
-                self.stealth_delay("network")
-            except (ssl.SSLError, ConnectionError, OSError):
-                tls_versions[ver_name] = False
-            except Exception:
-                pass
+            for ver_name, ver_const in protocol_map.items():
+                if ver_const is None:
+                    continue
+                try:
+                    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                    ctx.check_hostname = False
+                    ctx.verify_mode = ssl.CERT_NONE
+                    ctx.minimum_version = ver_const
+                    ctx.maximum_version = ver_const
+                    with socket.create_connection((host, port), timeout=5) as sock:
+                        with ctx.wrap_socket(sock, server_hostname=host) as ssock:
+                            tls_versions[ver_name] = True
+                    self.stealth_delay("network")
+                except (ssl.SSLError, ConnectionError, OSError):
+                    tls_versions[ver_name] = False
+                except Exception:
+                    pass
+        else:
+            legacy_protocol_map = {
+                "TLS_1.0": getattr(ssl, "PROTOCOL_TLSv1", None),
+                "TLS_1.1": getattr(ssl, "PROTOCOL_TLSv1_1", None),
+                "TLS_1.2": getattr(ssl, "PROTOCOL_TLSv1_2", None),
+            }
+
+            for ver_name, protocol in legacy_protocol_map.items():
+                if protocol is None:
+                    continue
+                try:
+                    ctx = ssl.SSLContext(protocol)
+                    ctx.check_hostname = False
+                    ctx.verify_mode = ssl.CERT_NONE
+                    with socket.create_connection((host, port), timeout=5) as sock:
+                        with ctx.wrap_socket(sock, server_hostname=host):
+                            tls_versions[ver_name] = True
+                    self.stealth_delay("network")
+                except (ssl.SSLError, ConnectionError, OSError):
+                    tls_versions[ver_name] = False
+                except Exception:
+                    pass
 
         if tls_versions.get("TLS_1.0"):
             vulnerabilities.append("TLS 1.0 supported (deprecated)")

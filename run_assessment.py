@@ -6,8 +6,8 @@ ESXi Vulnerability Assessment Framework (v2.1.0)
 Single-command entry point for the expanded automated pentest pipeline.
 
 Usage:
-  python run_assessment.py                # Full assessment (Phase 1-7)
-  python run_assessment.py --update       # Update tools then run full scan (Phase 0-7)
+  python run_assessment.py                # Full assessment (all enabled phases from config)
+  python run_assessment.py --update       # Force start from Phase 0
   python run_assessment.py --profile thorough  # deep scan (1-65535 ports)
   python run_assessment.py --mock         # Full pipeline with synthetic data
   python run_assessment.py --phase 6      # Resume from Nuclei vuln scanning
@@ -34,8 +34,28 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 # Cleaned up imports (no duplicates)
-from orchestrator.main import setup_logging, load_config, run_pipeline
+from orchestrator.main import (
+    determine_default_start_phase,
+    load_config,
+    run_pipeline,
+    setup_logging,
+)
 from orchestrator.ssl_scanner import run_ssl_automation
+
+
+def get_ssl_automation_subnets(config):
+    """Return the subnets the standalone SSL sweep should use."""
+    assessment_cfg = config.get("assessment", {})
+    ssl_cfg = assessment_cfg.get("ssl_automation", {})
+    if not ssl_cfg.get("enabled", True):
+        return []
+
+    configured_subnets = ssl_cfg.get("subnets")
+    if configured_subnets:
+        return [subnet for subnet in configured_subnets if subnet]
+
+    vm_subnets = assessment_cfg.get("vm_discovery", {}).get("subnets", [])
+    return [subnet for subnet in vm_subnets if subnet]
 
 def main():
     # Fix Windows console encoding
@@ -50,7 +70,7 @@ def main():
 
     parser.add_argument(
         "--update", action="store_true",
-        help="Run Phase 0 (Self-Update) before starting the assessment."
+        help="Force the pipeline to start from Phase 0 (Self-Update)."
     )
     parser.add_argument(
         "--profile", type=str, choices=["quick", "standard", "thorough"], default=None,
@@ -105,11 +125,13 @@ def main():
         print(f"[*] Overriding scan profile: {args.profile}")
 
     # Determine start phase
-    start_phase = 1
+    start_phase = determine_default_start_phase(config)
     if args.update:
         start_phase = 0
     if args.phase is not None:
         start_phase = args.phase
+    if args.dry_run:
+        start_phase = 1
 
     # Disable delta if requested
     if args.no_delta:
@@ -119,8 +141,14 @@ def main():
     try:
         # --> TRIGGER SSL AUTOMATION BEFORE MAIN PIPELINE <--
         # We skip it during a dry-run so it doesn't accidentally launch Nmap
-        if not args.dry_run:
-            run_ssl_automation(subnet="192.168.157.0/24")
+        if not args.dry_run and not args.mock:
+            ssl_subnets = get_ssl_automation_subnets(config)
+            if ssl_subnets:
+                run_ssl_automation(subnets=ssl_subnets)
+            else:
+                logging.getLogger(__name__).info(
+                    "Skipping standalone SSL automation because no subnets are configured."
+                )
 
         # Now run the main framework pipeline
         report = run_pipeline(
@@ -135,7 +163,9 @@ def main():
         json_path = output_dir / "assessment_report.json"
         html_path = output_dir / "assessment_report.html"
 
-        if json_path.exists():
+        if args.dry_run:
+            print(f"\n\033[92mDry-run completed successfully\033[0m")
+        elif json_path.exists():
             print(f"\n\033[92m✅ Assessment Completed Successfully\033[0m")
             print(f"📊 JSON Report: {json_path.absolute()}")
             if html_path.exists():

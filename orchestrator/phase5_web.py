@@ -34,6 +34,7 @@ from orchestrator.core.plugin import PhasePlugin
 from orchestrator.models import (
     AssessmentReport, WebAssessmentResult, WebVulnerability
 )
+from orchestrator.runtime import run_command
 
 logger = logging.getLogger(__name__)
 
@@ -74,10 +75,24 @@ class Phase5Web(PhasePlugin):
     def _curl_available(self) -> bool:
         return shutil.which("curl") is not None
 
+    def _get_nikto_cmd(self) -> Optional[List[str]]:
+        if shutil.which("nikto"):
+            return ["nikto"]
+
+        if shutil.which("wsl"):
+            try:
+                result = run_command(["wsl", "which", "nikto"], capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    return ["wsl", "nikto"]
+            except Exception:
+                pass
+
+        return None
+
     def _run_curl(self, args: List[str], timeout: int = 15) -> Tuple[int, str, str]:
         cmd = ["curl"] + args
         try:
-            result = subprocess.run(
+            result = run_command(
                 cmd, capture_output=True, text=True, check=False, timeout=timeout
             )
             return result.returncode, result.stdout, result.stderr
@@ -130,14 +145,18 @@ class Phase5Web(PhasePlugin):
 
     def _run_nikto(self, host: str, port: int, output_dir: Path) -> List[WebVulnerability]:
         findings = []
-        if not shutil.which("nikto"): return findings
+        nikto_cmd = self._get_nikto_cmd()
+        if not nikto_cmd:
+            return findings
 
         logger.info(f"  Running Nikto on {host}:{port}...")
         json_out = output_dir / f"nikto_{host}_{port}.json"
-        cmd = ["nikto", "-h", host, "-p", str(port), "-Format", "json", "-output", str(json_out), "-Tuning", "123x"]
+        cmd = nikto_cmd + ["-h", host, "-p", str(port), "-Format", "json", "-output", str(json_out), "-Tuning", "123x"]
         
         try:
-            subprocess.run(cmd, capture_output=True, timeout=600)
+            if json_out.exists():
+                json_out.unlink()
+            run_command(cmd, capture_output=True, text=True, timeout=600)
             if json_out.exists():
                 with open(json_out, 'r') as f:
                     data = json.load(f)

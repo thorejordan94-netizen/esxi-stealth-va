@@ -77,6 +77,12 @@ crypto:
   # Scan ALL discovered hosts with HTTPS ports (not just ESXi host)
   scan_all_hosts: true
 
+# --- Standalone SSL Automation ---
+# Legacy pre-pipeline HTTPS sweep. Leave subnets empty to reuse vm_discovery.subnets.
+ssl_automation:
+  enabled: true
+  subnets: []
+
 # --- SSL Labs API Settings ---
 # NOTE: SSL Labs requires internet access to the target.
 # In an air-gapped network, leave 'enabled: false' and use testssl.sh instead.

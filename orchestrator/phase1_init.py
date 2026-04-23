@@ -18,6 +18,7 @@ from typing import Dict, Any
 
 from orchestrator.core.plugin import PhasePlugin
 from orchestrator.models import AssessmentReport, AssessmentMetadata
+from orchestrator.runtime import get_privilege_prefix, run_command
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ class Phase1Init(PhasePlugin):
         # Check via WSL (Windows Subsystem for Linux)
         if shutil.which("wsl"):
             try:
-                result = subprocess.run(
+                result = run_command(
                     ["wsl", "which", tool_name],
                     capture_output=True, text=True, timeout=5
                 )
@@ -56,7 +57,7 @@ class Phase1Init(PhasePlugin):
         git_bash = shutil.which("bash")
         if git_bash:
             try:
-                result = subprocess.run(
+                result = run_command(
                     [git_bash, "-c", f"which {tool_name}"],
                     capture_output=True, text=True, timeout=5
                 )
@@ -76,15 +77,31 @@ class Phase1Init(PhasePlugin):
             logger.warning("Automatic tool installation only supported on Linux. Please install tools manually.")
             return {tool: False for tool in tools}
 
-        # Check if we have sudo
-        if not shutil.which("sudo"):
-            logger.warning("sudo not found. Cannot install tools automatically. Please install manually or run as root.")
+        privilege_prefix = get_privilege_prefix()
+        if privilege_prefix is None:
+            logger.warning("No root privileges available. Cannot install tools automatically.")
             return {tool: False for tool in tools}
+
+        pkg_mgr = None
+        if shutil.which("apt-get"):
+            pkg_mgr = "apt-get"
+        elif shutil.which("apt"):
+            pkg_mgr = "apt"
+        elif shutil.which("zypper"):
+            pkg_mgr = "zypper"
+        elif shutil.which("yum"):
+            pkg_mgr = "yum"
 
         logger.info("Attempting automatic installation of missing tools...")
 
+        if pkg_mgr in ("apt-get", "apt"):
+            try:
+                run_command(privilege_prefix + [pkg_mgr, "update"], check=True, capture_output=True, text=True)
+            except Exception as e:
+                logger.warning(f"Package metadata update failed via {pkg_mgr}: {e}")
+
         installed = {}
-        for tool, required in tools.items():
+        for tool in tools:
             if self._check_tool(tool):
                 installed[tool] = True
                 continue
@@ -92,16 +109,20 @@ class Phase1Init(PhasePlugin):
             logger.info(f"Installing {tool}...")
             try:
                 if tool == "nmap":
-                    subprocess.run(["sudo", "apt", "update"], check=True, capture_output=True)
-                    subprocess.run(["sudo", "apt", "install", "-y", "nmap"], check=True, capture_output=True)
+                    if not pkg_mgr:
+                        raise RuntimeError("No supported package manager found for nmap installation")
+                    run_command(privilege_prefix + [pkg_mgr, "install", "-y", "nmap"], check=True, capture_output=True, text=True)
                 elif tool == "curl":
-                    subprocess.run(["sudo", "apt", "install", "-y", "curl"], check=True, capture_output=True)
+                    if not pkg_mgr:
+                        raise RuntimeError("No supported package manager found for curl installation")
+                    run_command(privilege_prefix + [pkg_mgr, "install", "-y", "curl"], check=True, capture_output=True, text=True)
                 elif tool == "nikto":
-                    subprocess.run(["sudo", "apt", "install", "-y", "nikto"], check=True, capture_output=True)
+                    if not pkg_mgr:
+                        raise RuntimeError("No supported package manager found for nikto installation")
+                    run_command(privilege_prefix + [pkg_mgr, "install", "-y", "nikto"], check=True, capture_output=True, text=True)
                 elif tool == "nuclei":
                     # Download nuclei binary
                     import urllib.request
-                    import tarfile
                     import tempfile
                     import platform
                     arch = "amd64" if platform.machine() == "x86_64" else "386"
@@ -112,8 +133,8 @@ class Phase1Init(PhasePlugin):
                         import zipfile
                         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                             zip_ref.extractall(tmpdir)
-                        subprocess.run(["sudo", "cp", f"{tmpdir}/nuclei", "/usr/local/bin/nuclei"], check=True)
-                        subprocess.run(["sudo", "chmod", "+x", "/usr/local/bin/nuclei"], check=True)
+                        run_command(privilege_prefix + ["cp", f"{tmpdir}/nuclei", "/usr/local/bin/nuclei"], check=True)
+                        run_command(privilege_prefix + ["chmod", "+x", "/usr/local/bin/nuclei"], check=True)
                 elif tool == "testssl.sh":
                     # Download and install testssl.sh
                     import tempfile
@@ -132,8 +153,8 @@ class Phase1Init(PhasePlugin):
                         extracted_dir = extracted_dirs[0]
                         script_path = extracted_dir / "testssl.sh"
                         install_path = Path("/usr/local/bin/testssl.sh")
-                        subprocess.run(["sudo", "cp", str(script_path), str(install_path)], check=True)
-                        subprocess.run(["sudo", "chmod", "+x", str(install_path)], check=True)
+                        run_command(privilege_prefix + ["cp", str(script_path), str(install_path)], check=True)
+                        run_command(privilege_prefix + ["chmod", "+x", str(install_path)], check=True)
 
                 # Re-check after installation
                 if self._check_tool(tool):
@@ -267,7 +288,7 @@ class Phase1Init(PhasePlugin):
         report.metadata.vm_count = 31
 
         config["_tool_status"] = {
-            "nmap": True, "curl": True, "testssl.sh": True, "nikto": False
+            "nmap": True, "curl": True, "nuclei": True, "testssl.sh": True, "nikto": False
         }
 
         logger.info("[MOCK] Phase 1 complete. Metadata populated with defaults.")
