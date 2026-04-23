@@ -341,8 +341,18 @@ class Phase2Discovery(PhasePlugin):
         if interface:
             common_flags[2:2] = ["-e", interface]
 
-        ports_spec = scan_cfg.get("ports", "top-1000")
-        esxi_ports = scan_cfg.get("esxi_ports", "")
+        # If the user put "top-1000", Nmap does not accept it comma-separated with other ports.
+        # Nmap accepts `--top-ports 1000` or just a blank string (default is top 1000).
+        # We need to handle this properly.
+        port_args = []
+        if ports_spec == "top-1000":
+            if esxi_ports:
+                port_args = ["-p", esxi_ports, "--top-ports", "1000"]
+            else:
+                port_args = ["--top-ports", "1000"]
+        else:
+            combined_ports = f"{esxi_ports},{ports_spec}" if esxi_ports else ports_spec
+            port_args = ["-p", combined_ports]
 
         # =====================================================================
         # STEP 1: Scan primary ESXi host
@@ -351,10 +361,7 @@ class Phase2Discovery(PhasePlugin):
         logger.info(f"Scanning ESXi host: {target_ip} ({target_hostname})")
 
         esxi_xml = output_dir / "nmap" / "esxi_host.xml"
-        esxi_args = common_flags + [
-            "-p", f"{esxi_ports},{ports_spec}" if esxi_ports else ports_spec,
-            target_ip,
-        ]
+        esxi_args = common_flags + port_args + [target_ip]
 
         if self._run_nmap(esxi_args, esxi_xml, timeout=900):
             hosts = self._parse_nmap_xml(esxi_xml)
