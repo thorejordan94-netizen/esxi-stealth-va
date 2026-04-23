@@ -47,7 +47,7 @@ def get_privilege_prefix() -> Optional[List[str]]:
     Return the command prefix needed for privileged operations on Linux.
 
     - [] when already running as root
-    - ["sudo"] when sudo is available
+    - ["sudo", "-n"] when sudo is available (non-interactive)
     - None when elevation is unavailable
     """
     if os.name == "nt":
@@ -58,6 +58,8 @@ def get_privilege_prefix() -> Optional[List[str]]:
         return []
 
     if shutil.which("sudo"):
-        return ["sudo"]
+        # Use non-interactive sudo so automation never blocks on a password
+        # prompt in unattended environments.
+        return ["sudo", "-n"]
 
     return None
