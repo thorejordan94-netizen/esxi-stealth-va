@@ -221,19 +221,38 @@ class Phase2Discovery(PhasePlugin):
 
         return findings
 
+    def _parse_sweep_results(self, xml_out: Path) -> List[str]:
+        """Parse nmap sweep XML into a list of live IPv4 addresses."""
+        live_ips = []
+        try:
+            tree = ET.parse(xml_out)
+            for host_elem in tree.getroot().findall("host"):
+                status = host_elem.find("status")
+                if status is not None and status.get("state") == "up":
+                    addr = host_elem.find("address[@addrtype='ipv4']")
+                    if addr is not None:
+                        live_ips.append(addr.get("addr"))
+        except Exception as e:
+            logger.error(f"Failed to parse sweep results: {e}")
+        return live_ips
+
     def _sweep_subnet(self, subnet: str, exclude_ips: List[str],
                       stealth: Dict[str, Any], output_dir: Path,
-                      explicit_interface: Optional[str] = None) -> List[str]:
+                      explicit_interface: Optional[str] = None,
+                      vm_discovery_cfg: Optional[Dict[str, Any]] = None) -> List[str]:
         """
         Perform a gentle host discovery sweep on a subnet.
         Returns list of discovered live IPs.
         """
         sweep_cfg = stealth.get("sweep", {})
+        vm_discovery_cfg = vm_discovery_cfg or {}
+        probe_cfg = vm_discovery_cfg.get("discovery_probes", {})
         xml_out = output_dir / f"sweep_{subnet.replace('/', '_')}.xml"
+        xml_out_probe = output_dir / f"sweep_{subnet.replace('/', '_')}_probe.xml"
 
         # ARP scan is Layer 2 only — nearly invisible to IDS
         # Falls back to ICMP ping if ARP is not possible (different subnet)
-        args = [
+        base_args = [
             "-sn",  # Ping scan — no port scanning
             "--max-rate", str(stealth.get("network", {}).get("max_rate_pps", 100)),
             "-T2",  # Polite timing
@@ -247,30 +266,55 @@ class Phase2Discovery(PhasePlugin):
 
         sweep_interface = self._resolve_interface(explicit_interface, destination)
         if sweep_interface:
-            args[1:1] = ["-e", sweep_interface]
+            base_args[1:1] = ["-e", sweep_interface]
 
         # Exclude IPs
         if exclude_ips:
-            args.extend(["--exclude", ",".join(exclude_ips)])
+            base_args.extend(["--exclude", ",".join(exclude_ips)])
 
-        logger.info(f"Sweeping subnet {subnet} for live hosts...")
-        if not self._run_nmap(args, xml_out, timeout=300):
-            return []
+        probe_enabled = bool(probe_cfg.get("enabled", False))
+        probe_mode = str(probe_cfg.get("mode", "fallback")).lower()
+        ps_ports = str(probe_cfg.get("ps_ports", "")).strip()
+        pa_ports = str(probe_cfg.get("pa_ports", "")).strip()
 
-        # Parse discovered hosts
-        live_ips = []
-        try:
-            tree = ET.parse(xml_out)
-            for host_elem in tree.getroot().findall("host"):
-                status = host_elem.find("status")
-                if status is not None and status.get("state") == "up":
-                    addr = host_elem.find("address[@addrtype='ipv4']")
-                    if addr is not None:
-                        live_ips.append(addr.get("addr"))
-        except Exception as e:
-            logger.error(f"Failed to parse sweep results: {e}")
+        def run_sweep(args: List[str], out_file: Path, strategy: str) -> List[str]:
+            logger.info(f"Sweeping subnet {subnet} for live hosts (strategy={strategy})...")
+            if not self._run_nmap(args, out_file, timeout=300):
+                return []
+            return self._parse_sweep_results(out_file)
 
-        logger.info(f"Subnet sweep found {len(live_ips)} live hosts in {subnet}")
+        # Conservative default remains pure ping discovery.
+        live_ips = run_sweep(base_args, xml_out, "ping")
+        strategy_used = "ping"
+
+        should_try_probe = probe_enabled and probe_mode in {"fallback", "always"} and (probe_mode == "always" or not live_ips)
+        if should_try_probe and (ps_ports or pa_ports):
+            probe_args = list(base_args[:-1])  # all flags except target
+            if ps_ports:
+                probe_args.extend([f"-PS{ps_ports}"])
+            if pa_ports:
+                probe_args.extend([f"-PA{pa_ports}"])
+            probe_args.append(subnet)
+
+            probe_strategy_parts = ["probe"]
+            if ps_ports:
+                probe_strategy_parts.append(f"PS:{ps_ports}")
+            if pa_ports:
+                probe_strategy_parts.append(f"PA:{pa_ports}")
+            probe_strategy = "+".join(probe_strategy_parts)
+            probe_live_ips = run_sweep(probe_args, xml_out_probe, probe_strategy)
+
+            if probe_mode == "always":
+                live_ips = sorted(set(live_ips + probe_live_ips))
+                strategy_used = f"ping+{probe_strategy}"
+            elif probe_live_ips:
+                live_ips = probe_live_ips
+                strategy_used = probe_strategy
+
+        logger.info(
+            "Subnet sweep found %s live hosts in %s (strategy_used=%s, probes_enabled=%s, mode=%s)",
+            len(live_ips), subnet, strategy_used, probe_enabled, probe_mode
+        )
         return live_ips
 
     def execute(self, report: AssessmentReport, config: Dict[str, Any]):
@@ -342,7 +386,8 @@ class Phase2Discovery(PhasePlugin):
             for subnet in subnets:
                 ips = self._sweep_subnet(subnet, exclude, stealth_cfg,
                                           output_dir / "sweep",
-                                          explicit_interface=configured_interface)
+                                          explicit_interface=configured_interface,
+                                          vm_discovery_cfg=vm_disc)
                 discovered_ips.extend(ips)
                 self.stealth_delay("network")
 
