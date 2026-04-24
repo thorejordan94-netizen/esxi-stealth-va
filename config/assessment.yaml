@@ -23,7 +23,7 @@ vm_discovery:
   subnets:
     - "10.251.2.0/24"
     # Uncomment to add secondary network:
-    # - "192.168.157.0/24"
+    - "192.168.157.0/24"
   # Exclude these IPs from VM findings (gateways, scanner, ESXi host, etc.)
   exclude_ips:
     - "10.251.2.1"      # Default gateway (assumed)
