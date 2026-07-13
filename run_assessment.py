@@ -7,6 +7,7 @@ Single-command entry point for the expanded automated pentest pipeline.
 
 Usage:
   python run_assessment.py                # Full assessment (all enabled phases from config)
+  python run_assessment.py --auto-network # Auto-detect network and run assessment
   python run_assessment.py --update       # Force start from Phase 0
   python run_assessment.py --profile thorough  # deep scan (1-65535 ports)
   python run_assessment.py --mock         # Full pipeline with synthetic data
@@ -41,6 +42,10 @@ from orchestrator.main import (
     setup_logging,
 )
 from orchestrator.ssl_scanner import run_ssl_automation
+from orchestrator.network_detector import (
+    auto_detect_network,
+    update_config_with_detected_network,
+)
 
 
 def get_ssl_automation_subnets(config):
@@ -96,6 +101,10 @@ def main():
         "--config-dir", type=str, default="config",
         help="Path to configuration directory (default: ./config)."
     )
+    parser.add_argument(
+        "--auto-network", action="store_true",
+        help="Automatically detect network configuration and run assessment."
+    )
 
     args = parser.parse_args()
 
@@ -118,6 +127,16 @@ def main():
         sys.exit(1)
 
     config = load_config(config_dir)
+
+    # Auto-detect network if requested
+    if args.auto_network:
+        print("\n[*] Auto-detecting network configuration...")
+        detected = auto_detect_network()
+        config = update_config_with_detected_network(config, detected)
+        
+        if not detected['subnets']:
+            print("ERROR: Failed to auto-detect network. Please configure manually or check network connectivity.")
+            sys.exit(1)
 
     # Override scan profile if specified via CLI
     if args.profile:
