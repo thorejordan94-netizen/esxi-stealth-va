@@ -162,6 +162,17 @@ class Phase0Update(PhasePlugin):
                     logger.debug(f"  {tool}: {stderr[:100]}")
 
         elif pkg_mgr == "zypper":
+            try:
+                run_command(
+                    privilege_prefix + ["zypper", "--non-interactive", "refresh"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=PKG_UPDATE_TIMEOUT_SECONDS,
+                )
+            except Exception as e:
+                logger.warning(f"Package metadata refresh failed via zypper: {e}")
+
             for tool in ["nmap", "nikto", "curl"]:
                 success, stdout, stderr = self._run_cmd(
                     privilege_prefix + ["zypper", "--non-interactive", "install", "-y", tool],

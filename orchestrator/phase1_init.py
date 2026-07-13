@@ -137,6 +137,18 @@ class Phase1Init(PhasePlugin):
                 )
             except Exception as e:
                 logger.warning(f"Package metadata update failed via {pkg_mgr}: {e}")
+        elif pkg_mgr == "zypper":
+            try:
+                run_command(
+                    privilege_prefix + ["zypper", "--non-interactive", "refresh"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=PKG_UPDATE_TIMEOUT_SECONDS,
+                    env=install_env,
+                )
+            except Exception as e:
+                logger.warning(f"Package metadata refresh failed via zypper: {e}")
 
         installed = {}
         for tool in tools:
@@ -146,86 +158,81 @@ class Phase1Init(PhasePlugin):
 
             logger.info(f"Installing {tool}...")
             try:
-                if tool == "nmap":
-                    if not pkg_mgr:
-                        raise RuntimeError("No supported package manager found for nmap installation")
-                    run_command(
-                        privilege_prefix + [pkg_mgr] + pkg_install_flags + ["nmap"],
-                        check=True,
-                        capture_output=True,
-                        text=True,
-                        timeout=PKG_INSTALL_TIMEOUT_SECONDS,
-                        env=install_env,
-                    )
-                elif tool == "curl":
-                    if not pkg_mgr:
-                        raise RuntimeError("No supported package manager found for curl installation")
-                    run_command(
-                        privilege_prefix + [pkg_mgr] + pkg_install_flags + ["curl"],
-                        check=True,
-                        capture_output=True,
-                        text=True,
-                        timeout=PKG_INSTALL_TIMEOUT_SECONDS,
-                        env=install_env,
-                    )
-                elif tool == "nikto":
-                    if not pkg_mgr:
-                        raise RuntimeError("No supported package manager found for nikto installation")
-                    run_command(
-                        privilege_prefix + [pkg_mgr] + pkg_install_flags + ["nikto"],
-                        check=True,
-                        capture_output=True,
-                        text=True,
-                        timeout=PKG_INSTALL_TIMEOUT_SECONDS,
-                        env=install_env,
-                    )
-                elif tool == "nuclei":
-                    # Download nuclei binary
-                    import urllib.request
-                    import tempfile
-                    import platform
-                    arch = "amd64" if platform.machine() == "x86_64" else "386"
-                    url = f"https://github.com/projectdiscovery/nuclei/releases/download/v3.2.0/nuclei_3.2.0_linux_{arch}.zip"
-                    with tempfile.TemporaryDirectory() as tmpdir:
-                        zip_path = Path(tmpdir) / "nuclei.zip"
-                        urllib.request.urlretrieve(url, zip_path)
-                        import zipfile
-                        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                            zip_ref.extractall(tmpdir)
-                        run_command(privilege_prefix + ["cp", f"{tmpdir}/nuclei", "/usr/local/bin/nuclei"], check=True)
-                        run_command(privilege_prefix + ["chmod", "+x", "/usr/local/bin/nuclei"], check=True)
-                elif tool == "testssl.sh":
-                    # Download and install testssl.sh
-                    import tempfile
-                    import zipfile
-                    import urllib.request
+                package_names = self._get_package_names(tool, pkg_mgr) if pkg_mgr else []
+                if pkg_mgr and package_names:
+                    install_success = False
+                    last_error = None
+                    for package_name in package_names:
+                        try:
+                            logger.info(f"Installing {tool} via package manager package '{package_name}'...")
+                            run_command(
+                                privilege_prefix + [pkg_mgr] + pkg_install_flags + [package_name],
+                                check=True,
+                                capture_output=True,
+                                text=True,
+                                timeout=PKG_INSTALL_TIMEOUT_SECONDS,
+                                env=install_env,
+                            )
+                            install_success = True
+                            break
+                        except subprocess.CalledProcessError as e:
+                            last_error = e
+                            logger.warning(f"Package install failed for {package_name}: {e}")
 
-                    with tempfile.TemporaryDirectory() as tmpdir:
-                        zip_path = Path(tmpdir) / "testssl.zip"
-                        urllib.request.urlretrieve("https://github.com/drwetter/testssl.sh/archive/refs/heads/master.zip", zip_path)
-                        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                            zip_ref.extractall(tmpdir)
-                        # Find the extracted directory (it might be testssl.sh-master or testssl.sh-3.3dev)
-                        extracted_dirs = [d for d in Path(tmpdir).iterdir() if d.is_dir() and d.name.startswith("testssl.sh")]
-                        if not extracted_dirs:
-                            raise FileNotFoundError("Could not find extracted testssl.sh directory")
-                        extracted_dir = extracted_dirs[0]
-                        script_path = extracted_dir / "testssl.sh"
-                        install_path = Path("/usr/local/bin/testssl.sh")
-                        run_command(privilege_prefix + ["cp", str(script_path), str(install_path)], check=True)
-                        run_command(privilege_prefix + ["chmod", "+x", str(install_path)], check=True)
+                    if not install_success:
+                        if last_error:
+                            raise last_error
+                        raise RuntimeError(f"No package names succeeded for {tool}")
+                elif tool == "nuclei":
+                    self._install_nuclei_binary(privilege_prefix)
+                elif tool == "testssl.sh":
+                    self._install_testssl_script(privilege_prefix)
+                else:
+                    raise RuntimeError(f"No installation strategy available for {tool}")
 
                 # Re-check after installation
                 if self._check_tool(tool, config):
                     logger.info(f"  ✓ {tool} installed successfully")
                     installed[tool] = True
+                elif tool == "testssl.sh":
+                    logger.info(f"Package install for {tool} did not provide an executable; falling back to manual download/install.")
+                    self._install_testssl_script(privilege_prefix)
+                    installed[tool] = self._check_tool(tool, config)
+                    if installed[tool]:
+                        logger.info(f"  ✓ {tool} installed successfully via fallback")
+                    else:
+                        logger.error(f"  ✗ Failed to install {tool}")
+                elif tool == "nuclei":
+                    logger.info(f"Package install for {tool} did not provide an executable; falling back to direct download/install.")
+                    self._install_nuclei_binary(privilege_prefix)
+                    installed[tool] = self._check_tool(tool, config)
+                    if installed[tool]:
+                        logger.info(f"  ✓ {tool} installed successfully via fallback")
+                    else:
+                        logger.error(f"  ✗ Failed to install {tool}")
                 else:
                     logger.error(f"  ✗ Failed to install {tool}")
                     installed[tool] = False
 
             except subprocess.CalledProcessError as e:
-                logger.error(f"  ✗ Installation of {tool} failed: {e}")
-                installed[tool] = False
+                if tool in ("nuclei", "testssl.sh"):
+                    logger.warning(f"  ✗ Package install of {tool} failed; falling back to direct download: {e}")
+                    try:
+                        if tool == "nuclei":
+                            self._install_nuclei_binary(privilege_prefix)
+                        else:
+                            self._install_testssl_script(privilege_prefix)
+                        installed[tool] = self._check_tool(tool, config)
+                        if installed[tool]:
+                            logger.info(f"  ✓ {tool} installed successfully via fallback")
+                        else:
+                            logger.error(f"  ✗ Failed to install {tool} via fallback")
+                    except Exception as fallback_error:
+                        logger.error(f"  ✗ Fallback installation of {tool} failed: {fallback_error}")
+                        installed[tool] = False
+                else:
+                    logger.error(f"  ✗ Installation of {tool} failed: {e}")
+                    installed[tool] = False
             except subprocess.TimeoutExpired as e:
                 logger.error(f"  ✗ Installation of {tool} timed out after {e.timeout}s")
                 installed[tool] = False
@@ -234,6 +241,62 @@ class Phase1Init(PhasePlugin):
                 installed[tool] = False
 
         return installed
+
+    def _get_package_names(self, tool: str, pkg_mgr: str) -> list:
+        if pkg_mgr in ("apt-get", "apt"):
+            if tool == "testssl.sh":
+                return ["testssl", "testssl.sh"]
+            return [tool]
+
+        if pkg_mgr == "yum":
+            if tool == "testssl.sh":
+                return ["testssl"]
+            return [tool]
+
+        if pkg_mgr == "zypper":
+            if tool == "nikto":
+                return ["perl-Nikto", "nikto"]
+            if tool == "testssl.sh":
+                return ["testssl", "testssl.sh"]
+            if tool == "nuclei":
+                return []
+            return [tool]
+
+        return [tool]
+
+    def _install_nuclei_binary(self, privilege_prefix: list):
+        import urllib.request
+        import tempfile
+        import platform
+        arch = "amd64" if platform.machine() == "x86_64" else "386"
+        url = f"https://github.com/projectdiscovery/nuclei/releases/download/v3.2.0/nuclei_3.2.0_linux_{arch}.zip"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zip_path = Path(tmpdir) / "nuclei.zip"
+            urllib.request.urlretrieve(url, zip_path)
+            import zipfile
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(tmpdir)
+            run_command(privilege_prefix + ["cp", f"{tmpdir}/nuclei", "/usr/local/bin/nuclei"], check=True)
+            run_command(privilege_prefix + ["chmod", "+x", "/usr/local/bin/nuclei"], check=True)
+
+    def _install_testssl_script(self, privilege_prefix: list):
+        import tempfile
+        import zipfile
+        import urllib.request
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zip_path = Path(tmpdir) / "testssl.zip"
+            urllib.request.urlretrieve("https://github.com/drwetter/testssl.sh/archive/refs/heads/master.zip", zip_path)
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(tmpdir)
+            extracted_dirs = [d for d in Path(tmpdir).iterdir() if d.is_dir() and d.name.startswith("testssl.sh")]
+            if not extracted_dirs:
+                raise FileNotFoundError("Could not find extracted testssl.sh directory")
+            extracted_dir = extracted_dirs[0]
+            script_path = extracted_dir / "testssl.sh"
+            install_path = Path("/usr/local/bin/testssl.sh")
+            run_command(privilege_prefix + ["cp", str(script_path), str(install_path)], check=True)
+            run_command(privilege_prefix + ["chmod", "+x", str(install_path)], check=True)
 
     def execute(self, report: AssessmentReport, config: Dict[str, Any]):
         assessment_cfg = config.get("assessment", {})
