@@ -177,7 +177,7 @@ class Phase1Init(PhasePlugin):
                             break
                         except subprocess.CalledProcessError as e:
                             last_error = e
-                            logger.warning(f"Package install failed for {package_name}: {e}")
+                            logger.warning(f"Package install failed for {package_name}: exit {e.returncode}")
 
                     if not install_success:
                         if last_error:
@@ -187,6 +187,8 @@ class Phase1Init(PhasePlugin):
                     self._install_nuclei_binary(privilege_prefix)
                 elif tool == "testssl.sh":
                     self._install_testssl_script(privilege_prefix)
+                elif tool == "nikto":
+                    self._install_nikto_script(privilege_prefix)
                 else:
                     raise RuntimeError(f"No installation strategy available for {tool}")
 
@@ -215,23 +217,25 @@ class Phase1Init(PhasePlugin):
                     installed[tool] = False
 
             except subprocess.CalledProcessError as e:
-                if tool in ("nuclei", "testssl.sh"):
-                    logger.warning(f"  ✗ Package install of {tool} failed; falling back to direct download: {e}")
+                if tool in ("nuclei", "testssl.sh", "nikto"):
+                    logger.warning(f"  ✗ Optional tool package install failed for {tool} (exit {e.returncode}); attempting fallback installation.")
                     try:
                         if tool == "nuclei":
                             self._install_nuclei_binary(privilege_prefix)
-                        else:
+                        elif tool == "testssl.sh":
                             self._install_testssl_script(privilege_prefix)
+                        else:
+                            self._install_nikto_script(privilege_prefix)
                         installed[tool] = self._check_tool(tool, config)
                         if installed[tool]:
                             logger.info(f"  ✓ {tool} installed successfully via fallback")
                         else:
-                            logger.error(f"  ✗ Failed to install {tool} via fallback")
+                            logger.warning(f"  ✗ Optional tool {tool} could not be installed via fallback; continuing without it.")
                     except Exception as fallback_error:
-                        logger.error(f"  ✗ Fallback installation of {tool} failed: {fallback_error}")
+                        logger.warning(f"  ✗ Fallback installation of optional tool {tool} failed: {fallback_error}; continuing without it.")
                         installed[tool] = False
                 else:
-                    logger.error(f"  ✗ Installation of {tool} failed: {e}")
+                    logger.error(f"  ✗ Required tool installation failed: {tool} returned {e.returncode}. Install it manually or add it to PATH.")
                     installed[tool] = False
             except subprocess.TimeoutExpired as e:
                 logger.error(f"  ✗ Installation of {tool} timed out after {e.timeout}s")
@@ -254,11 +258,8 @@ class Phase1Init(PhasePlugin):
             return [tool]
 
         if pkg_mgr == "zypper":
-            if tool == "nikto":
-                return ["perl-Nikto", "nikto"]
-            if tool == "testssl.sh":
-                return ["testssl", "testssl.sh"]
-            if tool == "nuclei":
+            # Avoid failing openSUSE optional tool installs with zypper package errors.
+            if tool in ("nikto", "testssl.sh", "nuclei"):
                 return []
             return [tool]
 
@@ -295,6 +296,27 @@ class Phase1Init(PhasePlugin):
             extracted_dir = extracted_dirs[0]
             script_path = extracted_dir / "testssl.sh"
             install_path = Path("/usr/local/bin/testssl.sh")
+            run_command(privilege_prefix + ["cp", str(script_path), str(install_path)], check=True)
+            run_command(privilege_prefix + ["chmod", "+x", str(install_path)], check=True)
+
+    def _install_nikto_script(self, privilege_prefix: list):
+        import tempfile
+        import zipfile
+        import urllib.request
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zip_path = Path(tmpdir) / "nikto.zip"
+            urllib.request.urlretrieve("https://github.com/sullo/nikto/archive/refs/heads/master.zip", zip_path)
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(tmpdir)
+            extracted_dirs = [d for d in Path(tmpdir).iterdir() if d.is_dir() and d.name.startswith("nikto")]
+            if not extracted_dirs:
+                raise FileNotFoundError("Could not find extracted nikto directory")
+            extracted_dir = extracted_dirs[0]
+            script_path = extracted_dir / "program" / "nikto.pl"
+            if not script_path.exists():
+                raise FileNotFoundError("Nikto script not found in downloaded archive")
+            install_path = Path("/usr/local/bin/nikto")
             run_command(privilege_prefix + ["cp", str(script_path), str(install_path)], check=True)
             run_command(privilege_prefix + ["chmod", "+x", str(install_path)], check=True)
 
