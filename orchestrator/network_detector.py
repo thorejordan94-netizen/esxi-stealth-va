@@ -31,7 +31,7 @@ def get_local_interfaces() -> Dict[str, Dict[str, str]]:
     try:
         result = subprocess.run(
             ["ip", "addr", "show"],
-            capture_output=True, text=True, timeout=5
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=5
         )
         
         if result.returncode != 0:
@@ -81,7 +81,7 @@ def get_default_gateway() -> Optional[str]:
     try:
         result = subprocess.run(
             ["ip", "route", "show"],
-            capture_output=True, text=True, timeout=5
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=5
         )
         
         if result.returncode != 0:
@@ -149,7 +149,7 @@ def detect_esxi_hosts(subnet: str, timeout_sec: int = 30) -> List[str]:
         
         logger.info(f"Running ESXi host detection on {subnet}...")
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout_sec
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=timeout_sec
         )
         
         if result.returncode != 0:
@@ -204,7 +204,7 @@ def get_active_hosts(subnet: str, timeout_sec: int = 15) -> List[str]:
         
         logger.info(f"Running host discovery ping sweep on {subnet}...")
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout_sec
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=timeout_sec
         )
         
         # Parse nmap greppable output
@@ -294,7 +294,7 @@ def auto_detect_network() -> Dict[str, any]:
     
     # Step 3: Identify subnets and build exclude list
     logger.info("\n[3/5] Identifying subnets to scan...")
-    local_ips = get_local_ips()
+    local_ips = detect_local_ips()
     result['exclude_ips'].update(local_ips)
     
     for iface_name, iface_info in interfaces.items():
