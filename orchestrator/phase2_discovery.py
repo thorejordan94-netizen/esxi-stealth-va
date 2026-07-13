@@ -116,18 +116,39 @@ class Phase2Discovery(PhasePlugin):
     def phase_number(self) -> int:
         return 2
 
-    def _get_nmap_cmd(self) -> str:
+    def _get_tool_path(self, tool_name: str, config: Dict[str, Any]) -> str:
+        """Get the full path to a tool, preferring config over PATH."""
+        # Check for a manually configured path in assessment.yaml
+        tool_paths = config.get("tool_paths", {})
+        if tool_name in tool_paths and tool_paths[tool_name]:
+            path = Path(tool_paths[tool_name])
+            if path.is_file() and path.stat().st_mode & 0o111:
+                logger.info(f"  ✓ {tool_name} found via configured path: {path}")
+                return str(path)
+            else:
+                logger.warning(f"  ✗ Configured path for {tool_name} is not a valid executable file: {path}")
+
+        # Fallback to shutil.which (native PATH)
+        found_path = shutil.which(tool_name)
+        if found_path:
+            logger.info(f"  ✓ {tool_name} found in PATH: {found_path}")
+            return found_path
+
+        return ""
+
+    def _get_nmap_cmd(self, config: Dict[str, Any]) -> str:
         """Determine how to invoke nmap (native or WSL)."""
-        if shutil.which("nmap"):
-            return "nmap"
+        nmap_path = self._get_tool_path("nmap", config)
+        if nmap_path:
+            return nmap_path
         # Try WSL
         if shutil.which("wsl"):
             return "wsl nmap"
         return "nmap"  # Will fail gracefully
 
-    def _run_nmap(self, args: List[str], output_xml: Path, timeout: int = 600) -> bool:
+    def _run_nmap(self, args: List[str], output_xml: Path, config: Dict[str, Any], timeout: int = 600) -> bool:
         """Execute an nmap command and capture XML output."""
-        nmap_base = self._get_nmap_cmd()
+        nmap_base = self._get_nmap_cmd(config)
         cmd_parts = nmap_base.split() + args + ["-oX", str(output_xml)]
 
         logger.info(f"Running: {' '.join(cmd_parts)}")
@@ -234,6 +255,7 @@ class Phase2Discovery(PhasePlugin):
 
     def _sweep_subnet(self, subnet: str, exclude_ips: List[str],
                       stealth: Dict[str, Any], output_dir: Path,
+                      config: Dict[str, Any],
                       explicit_interface: Optional[str] = None,
                       vm_discovery_cfg: Optional[Dict[str, Any]] = None) -> List[str]:
         """
@@ -275,7 +297,7 @@ class Phase2Discovery(PhasePlugin):
 
         def run_sweep(args: List[str], out_file: Path, strategy: str) -> List[str]:
             logger.info(f"Sweeping subnet {subnet} for live hosts (strategy={strategy})...")
-            if not self._run_nmap(args, out_file, timeout=300):
+            if not self._run_nmap(args, out_file, config, timeout=300):
                 return []
             return self._parse_sweep_results(out_file)
 
@@ -366,7 +388,7 @@ class Phase2Discovery(PhasePlugin):
         esxi_xml = output_dir / "nmap" / "esxi_host.xml"
         esxi_args = common_flags + build_port_args(ports_spec, esxi_ports) + [target_ip]
 
-        if self._run_nmap(esxi_args, esxi_xml, timeout=900):
+        if self._run_nmap(esxi_args, esxi_xml, config, timeout=900):
             hosts = self._parse_nmap_xml(esxi_xml)
             for h in hosts:
                 h.hostname = target_hostname
@@ -392,6 +414,7 @@ class Phase2Discovery(PhasePlugin):
             for subnet in subnets:
                 ips = self._sweep_subnet(subnet, exclude, stealth_cfg,
                                           output_dir / "sweep",
+                                          config,
                                           explicit_interface=configured_interface,
                                           vm_discovery_cfg=vm_disc)
                 discovered_ips.extend(ips)
@@ -416,7 +439,7 @@ class Phase2Discovery(PhasePlugin):
             vm_xml = output_dir / "nmap" / f"vm_{vm_ip.replace('.', '_')}.xml"
             vm_args = common_flags + build_port_args(ports_spec, "") + [vm_ip]
 
-            if self._run_nmap(vm_args, vm_xml, timeout=600):
+            if self._run_nmap(vm_args, vm_xml, config, timeout=600):
                 hosts = self._parse_nmap_xml(vm_xml)
                 for h in hosts:
                     h.role = "vm"

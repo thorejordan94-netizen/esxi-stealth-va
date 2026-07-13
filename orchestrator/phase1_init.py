@@ -36,11 +36,29 @@ class Phase1Init(PhasePlugin):
     def phase_number(self) -> int:
         return 1
 
-    def _check_tool(self, tool_name: str, test_args: list = None) -> bool:
-        """Check if an external tool is available in PATH or via WSL."""
-        # First check native PATH
-        if shutil.which(tool_name):
-            logger.info(f"  ✓ {tool_name} found in PATH")
+    def _get_tool_path(self, tool_name: str, config: Dict[str, Any]) -> str:
+        """Get the full path to a tool, preferring config over PATH."""
+        # Check for a manually configured path in assessment.yaml
+        tool_paths = config.get("tool_paths", {})
+        if tool_name in tool_paths and tool_paths[tool_name]:
+            path = Path(tool_paths[tool_name])
+            if path.is_file() and path.stat().st_mode & 0o111:
+                logger.info(f"  ✓ {tool_name} found via configured path: {path}")
+                return str(path)
+            else:
+                logger.warning(f"  ✗ Configured path for {tool_name} is not a valid executable file: {path}")
+
+        # Fallback to shutil.which (native PATH)
+        found_path = shutil.which(tool_name)
+        if found_path:
+            logger.info(f"  ✓ {tool_name} found in PATH: {found_path}")
+            return found_path
+
+        return ""
+
+    def _check_tool(self, tool_name: str, config: Dict[str, Any], test_args: list = None) -> bool:
+        """Check if an external tool is available from config, PATH, or via WSL."""
+        if self._get_tool_path(tool_name, config):
             return True
 
         # Check via WSL (Windows Subsystem for Linux)
@@ -73,7 +91,7 @@ class Phase1Init(PhasePlugin):
         logger.warning(f"  ✗ {tool_name} not found")
         return False
 
-    def _install_missing_tools(self, tools: Dict[str, bool]) -> Dict[str, bool]:
+    def _install_missing_tools(self, tools: Dict[str, bool], config: Dict[str, Any]) -> Dict[str, bool]:
         """Attempt to install missing tools automatically on Linux systems."""
         import platform
         if platform.system() != "Linux":
@@ -122,7 +140,7 @@ class Phase1Init(PhasePlugin):
 
         installed = {}
         for tool in tools:
-            if self._check_tool(tool):
+            if self._check_tool(tool, config):
                 installed[tool] = True
                 continue
 
@@ -198,7 +216,7 @@ class Phase1Init(PhasePlugin):
                         run_command(privilege_prefix + ["chmod", "+x", str(install_path)], check=True)
 
                 # Re-check after installation
-                if self._check_tool(tool):
+                if self._check_tool(tool, config):
                     logger.info(f"  ✓ {tool} installed successfully")
                     installed[tool] = True
                 else:
@@ -274,7 +292,7 @@ class Phase1Init(PhasePlugin):
         missing_required = []
         missing_optional = []
         for tool, required in tools.items():
-            available = self._check_tool(tool)
+            available = self._check_tool(tool, config)
             tool_status[tool] = available
             if not available:
                 if required:
@@ -290,7 +308,7 @@ class Phase1Init(PhasePlugin):
                     logger.warning(f"Required tool '{tool}' is unavailable; dry-run will continue without installation.")
             else:
                 logger.info(f"Required tools missing: {', '.join(missing_required)}. Attempting automatic installation...")
-                install_results = self._install_missing_tools({tool: True for tool in missing_required})
+                install_results = self._install_missing_tools({tool: True for tool in missing_required}, config)
                 for tool, success in install_results.items():
                     tool_status[tool] = success
                     if not success:
@@ -304,7 +322,7 @@ class Phase1Init(PhasePlugin):
                     logger.info(f"Optional tool '{tool}' is unavailable; skipping installation during dry-run.")
             else:
                 logger.info(f"Optional tools missing: {', '.join(missing_optional)}. Attempting automatic installation...")
-                install_results = self._install_missing_tools({tool: False for tool in missing_optional})
+                install_results = self._install_missing_tools({tool: False for tool in missing_optional}, config)
                 for tool, success in install_results.items():
                     tool_status[tool] = success
                     if success:

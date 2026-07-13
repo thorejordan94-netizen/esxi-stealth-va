@@ -7,8 +7,6 @@
 # is properly installed and functional.
 #
 
-set -e
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
@@ -69,8 +67,8 @@ echo ""
 echo -e "${BLUE}[3/5] Module Imports${NC}"
 echo "─────────────────────────────────────────────────────────────"
 
-run_test "network_detector imports" "python3 -c \"from orchestrator.network_detector import auto_detect_network, update_config_with_detected_network; print('OK')\""
-run_test "run_assessment imports" "python3 -c \"import run_assessment; print('OK')\""
+run_test "network_detector imports" "python3 -c 'from orchestrator.network_detector import auto_detect_network, update_config_with_detected_network; print("OK")'"
+run_test "run_assessment imports" "python3 -c 'import run_assessment; print("OK")'"
 
 echo ""
 echo -e "${BLUE}[4/5] CLI Interface${NC}"

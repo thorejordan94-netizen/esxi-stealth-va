@@ -194,3 +194,11 @@ environment:
   # Optional: Change Request number for audit trail
   change_request: ""
   notes: "Wöchentlicher automatisierter Pentest — ESXi-Netzwerk mit 50+ VMs"
+
+# --- Tool Paths (Optional) ---
+# If tools are not in the system's PATH, specify their full paths here.
+tool_paths:
+  nmap: "/usr/bin/nmap"
+  nuclei: "/usr/local/bin/nuclei"
+  testssl: "/usr/local/bin/testssl.sh"
+  nikto: "/usr/bin/nikto"
