@@ -216,6 +216,8 @@ def run_pipeline(config: Dict[str, Any],
             )
         )
 
+    config["_dry_run"] = dry_run
+
     # --- Build phase pipeline ---
     phases = [
         Phase0Update(stealth_cfg),

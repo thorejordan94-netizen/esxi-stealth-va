@@ -220,6 +220,7 @@ class Phase1Init(PhasePlugin):
     def execute(self, report: AssessmentReport, config: Dict[str, Any]):
         assessment_cfg = config.get("assessment", {})
         stealth_cfg = config.get("stealth", {})
+        dry_run = bool(config.get("_dry_run", False))
 
         # --- CyberArk Audit Banner ---
         cr = assessment_cfg.get("environment", {}).get("change_request", "N/A")
@@ -283,24 +284,33 @@ class Phase1Init(PhasePlugin):
 
         # Attempt automatic installation of missing required tools
         if missing_required:
-            logger.info(f"Required tools missing: {', '.join(missing_required)}. Attempting automatic installation...")
-            install_results = self._install_missing_tools({tool: True for tool in missing_required})
-            for tool, success in install_results.items():
-                tool_status[tool] = success
-                if not success:
-                    report.add_error("phase1_init", self.name,
-                        f"Required tool '{tool}' not found and automatic installation failed. Install it manually or add to PATH.")
+            if dry_run:
+                logger.info("Dry-run enabled; skipping automatic tool installation and keeping tool availability as-is.")
+                for tool in missing_required:
+                    logger.warning(f"Required tool '{tool}' is unavailable; dry-run will continue without installation.")
+            else:
+                logger.info(f"Required tools missing: {', '.join(missing_required)}. Attempting automatic installation...")
+                install_results = self._install_missing_tools({tool: True for tool in missing_required})
+                for tool, success in install_results.items():
+                    tool_status[tool] = success
+                    if not success:
+                        report.add_error("phase1_init", self.name,
+                            f"Required tool '{tool}' not found and automatic installation failed. Install it manually or add to PATH.")
 
         # Attempt automatic installation of missing optional tools
         if missing_optional:
-            logger.info(f"Optional tools missing: {', '.join(missing_optional)}. Attempting automatic installation...")
-            install_results = self._install_missing_tools({tool: False for tool in missing_optional})
-            for tool, success in install_results.items():
-                tool_status[tool] = success
-                if success:
-                    logger.info(f"Optional tool '{tool}' installed successfully.")
-                else:
-                    logger.warning(f"Optional tool '{tool}' could not be installed automatically.")
+            if dry_run:
+                for tool in missing_optional:
+                    logger.info(f"Optional tool '{tool}' is unavailable; skipping installation during dry-run.")
+            else:
+                logger.info(f"Optional tools missing: {', '.join(missing_optional)}. Attempting automatic installation...")
+                install_results = self._install_missing_tools({tool: False for tool in missing_optional})
+                for tool, success in install_results.items():
+                    tool_status[tool] = success
+                    if success:
+                        logger.info(f"Optional tool '{tool}' installed successfully.")
+                    else:
+                        logger.warning(f"Optional tool '{tool}' could not be installed automatically.")
 
         # Store tool availability for downstream phases
         config["_tool_status"] = tool_status
