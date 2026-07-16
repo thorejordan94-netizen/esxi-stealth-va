@@ -32,18 +32,14 @@ vm_discovery:
     - "10.251.2.255"    # Broadcast
   # If method=static, list VM IPs here instead:
   static_ips: []
-  # Optional host-discovery probe tuning for harder-to-ping networks.
-  # Conservative default: disabled (pure ping/ARP only).
+  # TCP probes improve discovery where ICMP is filtered.
   discovery_probes:
-    enabled: false
+    enabled: true
     # fallback = only retry with probes when ping sweep finds nothing
     # always   = run ping + probe discovery and merge both results
-    mode: "fallback"
-    # Optional nmap ping probes (examples):
-    #   ps_ports: "22,80,443"  -> adds -PS22,80,443
-    #   pa_ports: "80,443"     -> adds -PA80,443
-    ps_ports: ""
-    pa_ports: ""
+    mode: "always"
+    ps_ports: "22,80,443,445,3389,902,5989,8080,8443"
+    pa_ports: "80,443"
   # Known VM names for correlation (optional — enriches report)
   known_vms:
     - "v268tmp"
@@ -57,6 +53,36 @@ vm_discovery:
     - "va017"
     - "va018"
     - "va019-ansible"
+
+# --- Expanded Internal Discovery ---
+# Scope guards apply before scans are launched. Public and oversized networks
+# are rejected unless explicitly changed here.
+expanded_discovery:
+  tcp_ports: "top-2000"
+  esxi_ports: "22,80,443,427,902,5988,5989,8000,8080,9080,9443"
+  allow_public_subnets: false
+  max_addresses_per_subnet: 4096
+  # Include machines already observed in the local ARP/neighbor cache.
+  neighbor_cache: true
+  # Bounded UDP coverage for DNS, NTP, SNMP, DHCP, IPsec, and similar services.
+  udp:
+    enabled: true
+    top_ports: 20
+    version_intensity: 1
+    max_retries: 1
+    timeout: 900
+
+# --- Safe Internal Security Tests ---
+# Only deterministic service-enumeration and configuration checks are used.
+# No brute force, exploit, fuzz, intrusive, or denial-of-service scripts.
+security_tests:
+  enabled: true
+  max_ports_per_host: 128
+  script_timeout: "45s"
+  host_timeout: "20m"
+  timeout: 1200
+  # Extra NSE script names require explicit review before adding.
+  additional_safe_scripts: []
 
 # --- Phase Toggles ---
 # Set any phase to false to skip it entirely
@@ -72,7 +98,7 @@ phases:
 
 # --- Scan Settings ---
 scan:
-  # Port specification for host/VM scans
+  # Base port specification. Expanded discovery overrides this with top-2000.
   ports: "top-1000"
   # ESXi-specific ports to always include
   esxi_ports: "80,443,902,5989,8000,8080,9080"
