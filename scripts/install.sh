@@ -1,198 +1,154 @@
-#!/bin/bash
-# ============================================================================
-# ESXi Pentest Framework — One-Shot Installer
-# ============================================================================
-# Installs all required system dependencies on the scanning VM.
-# Supported OS: Debian, Ubuntu, Kali, RHEL, CentOS, SUSE
-# ============================================================================
+#!/usr/bin/env bash
+# ESXi Stealth VA - resilient one-shot installer
+set -Eeuo pipefail
 
-set -e
-
-# Change to the project root directory so relative paths work correctly
 cd "$(dirname "$0")/.."
 
-# Proxy Configuration
+OFFLINE_MODE=false
 PROXY_HOST="${PROXY_HOST:-}"
 PROXY_PORT="${PROXY_PORT:-}"
-OFFLINE_MODE=false
+PROXY_URL=""
 
-if [[ "$*" == *"--offline"* ]]; then
-    OFFLINE_MODE=true
+for arg in "$@"; do
+  case "$arg" in
+    --offline) OFFLINE_MODE=true ;;
+    --proxy=*) PROXY_HOST="${arg#--proxy=}" ;;
+    --proxy-port=*) PROXY_PORT="${arg#--proxy-port=}" ;;
+  esac
+done
+
+if [[ -n "$PROXY_HOST" ]]; then
+  if [[ "$PROXY_HOST" == http://* || "$PROXY_HOST" == https://* ]]; then
+    PROXY_URL="$PROXY_HOST"
+  else
+    PROXY_URL="http://${PROXY_HOST}${PROXY_PORT:+:$PROXY_PORT}"
+  fi
+  export http_proxy="$PROXY_URL" https_proxy="$PROXY_URL"
+  export HTTP_PROXY="$PROXY_URL" HTTPS_PROXY="$PROXY_URL"
+  export no_proxy="localhost,127.0.0.1"
+  echo "[*] Using proxy: $PROXY_URL"
 fi
 
-if [[ "$*" == *"--proxy="* ]]; then
-    PROXY_HOST=$(echo "$*" | grep -oP '(?<=--proxy=)[^[:space:]]*' | head -1)
-fi
+run_root() {
+  if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+    "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+  else
+    echo "[!] Administrator access is required. Run as root or install sudo."
+    return 1
+  fi
+}
 
-if [[ "$*" == *"--proxy-port="* ]]; then
-    PROXY_PORT=$(echo "$*" | grep -oP '(?<=--proxy-port=)[^[:space:]]*' | head -1)
-fi
-
-# Set proxy environment variables if configured
-if [ -n "$PROXY_HOST" ]; then
-    PROXY_URL="http://$PROXY_HOST${PROXY_PORT:+:$PROXY_PORT}"
-    export http_proxy="$PROXY_URL"
-    export https_proxy="$PROXY_URL"
-    export HTTP_PROXY="$PROXY_URL"
-    export HTTPS_PROXY="$PROXY_URL"
-    export no_proxy="localhost,127.0.0.1"
-    echo "[*] Using proxy: $PROXY_URL"
-fi
+warn_optional() {
+  echo "[!] Optional component unavailable: $1"
+  echo "[!] Core installation will continue. You can install it later."
+}
 
 echo "----------------------------------------------------------------------"
-echo "  ESXi Stealth VA Framework Installer $([ "$OFFLINE_MODE" = true ] && echo "[OFFLINE MODE]")"
+echo "  ESXi Stealth VA Framework Installer $($OFFLINE_MODE && echo '[OFFLINE MODE]')"
 echo "----------------------------------------------------------------------"
 
-# 1. Detect OS
-if [ -f /etc/os-release ]; then
-    . /etc/os-release
-    OS=$ID
+if [[ -r /etc/os-release ]]; then
+  . /etc/os-release
+  OS="${ID:-unknown}"
 else
-    echo "Unsupported OS"
-    exit 1
+  OS="unknown"
 fi
-
 echo "[*] Detecting OS: $OS"
 
-# 2. Install System Tools
-if [ "$OFFLINE_MODE" = false ]; then
-    case "$OS" in
-        ubuntu|debian|kali)
-            if [ -n "$PROXY_URL" ]; then
-                sudo apt-get -o Acquire::http::Proxy="$PROXY_URL" -o Acquire::https::Proxy="$PROXY_URL" update
-                sudo apt-get -o Acquire::http::Proxy="$PROXY_URL" -o Acquire::https::Proxy="$PROXY_URL" install -y nmap curl python3-pip nikto git unzip
-            else
-                sudo apt-get update
-                sudo apt-get install -y nmap curl python3-pip nikto git unzip
-            fi
-            ;;
-        centos|rhel|almalinux)
-            if [ -n "$PROXY_URL" ]; then
-                sudo yum --httpproxy="$PROXY_URL" check-update || true
-                sudo yum --httpproxy="$PROXY_URL" install -y nmap curl python3-pip git unzip
-                sudo yum --httpproxy="$PROXY_URL" install -y epel-release || true
-                sudo yum --httpproxy="$PROXY_URL" install -y nikto || true
-            else
-                sudo yum check-update || true
-                sudo yum install -y nmap curl python3-pip git unzip
-                sudo yum install -y epel-release || true
-                sudo yum install -y nikto || true
-            fi
-            ;;
-        sles|opensuse*)
-            if [ -n "$PROXY_URL" ]; then
-                echo "[*] Configuring zypper with proxy..."
-                sudo env http_proxy="$PROXY_URL" https_proxy="$PROXY_URL" HTTP_PROXY="$PROXY_URL" HTTPS_PROXY="$PROXY_URL" zypper ar --no-gpgcheck --priority 100 "https://download.opensuse.org/distribution/leap/15.6/repo/oss/" "OSS-$RANDOM" 2>/dev/null || true
-                sudo env http_proxy="$PROXY_URL" https_proxy="$PROXY_URL" HTTP_PROXY="$PROXY_URL" HTTPS_PROXY="$PROXY_URL" zypper refresh -f -q 2>/dev/null || echo "[!] Warning: Repository refresh had issues, continuing anyway..."
-                
-                # Install packages separately to prevent one broken dependency (like git) from failing everything else
-                for pkg in nmap curl python311-pip python311 python3-pip git unzip python3-devel libffi-devel libopenssl-devel; do
-                    sudo env http_proxy="$PROXY_URL" https_proxy="$PROXY_URL" HTTP_PROXY="$PROXY_URL" HTTPS_PROXY="$PROXY_URL" zypper --non-interactive install -y $pkg 2>/dev/null || \
-                    sudo env http_proxy="$PROXY_URL" https_proxy="$PROXY_URL" HTTP_PROXY="$PROXY_URL" HTTPS_PROXY="$PROXY_URL" zypper --non-interactive --no-gpg-checks install -y $pkg 2>/dev/null || \
-                    echo "[!] Warning: Failed to install $pkg"
-                done
-            else
-                echo "[*] Refreshing zypper repositories..."
-                sudo zypper refresh -f -q 2>/dev/null || echo "[!] Warning: Repository refresh had issues, continuing anyway..."
-                
-                # Install packages separately
-                for pkg in nmap curl python311-pip python311 python3-pip git unzip python3-devel libffi-devel libopenssl-devel; do
-                    sudo zypper --non-interactive install -y $pkg 2>/dev/null || \
-                    sudo zypper --non-interactive --no-gpg-checks install -y $pkg 2>/dev/null || \
-                    echo "[!] Warning: Failed to install $pkg"
-                done
-            fi
-            ;;
-        *)
-            echo "OS $OS not explicitly supported. Install nmap, curl, nikto, nuclei manually."
-            ;;
-    esac
+install_packages() {
+  $OFFLINE_MODE && {
+    echo "[!] Offline mode: package downloads skipped."
+    return 0
+  }
+
+  case "$OS" in
+    ubuntu|debian|kali)
+      run_root apt-get update
+      run_root apt-get install -y nmap curl python3 python3-pip git unzip ca-certificates iproute2
+      run_root apt-get install -y nikto || warn_optional "nikto"
+      ;;
+    fedora|rhel|centos|almalinux|rocky)
+      local pm="yum"
+      command -v dnf >/dev/null 2>&1 && pm="dnf"
+      run_root "$pm" install -y nmap curl python3 python3-pip git unzip ca-certificates iproute
+      run_root "$pm" install -y nikto || warn_optional "nikto"
+      ;;
+    sles|opensuse*|opensuse-leap|opensuse-tumbleweed)
+      run_root zypper --non-interactive refresh || echo "[!] Repository refresh failed; using available package metadata."
+      local pkg
+      for pkg in nmap curl python3 python3-pip python311 python311-pip git unzip ca-certificates iproute2; do
+        run_root zypper --non-interactive install "$pkg" >/dev/null 2>&1 || true
+      done
+      ;;
+    *)
+      echo "[!] Unsupported package manager. Required tools will be checked below."
+      ;;
+  esac
+}
+
+install_packages
+
+for required in python3 nmap curl git; do
+  if ! command -v "$required" >/dev/null 2>&1; then
+    echo "[ERROR] Required program is missing: $required"
+    echo "Install it with your OS package manager, then run this installer again."
+    exit 1
+  fi
+done
+
+PYTHON_VERSION="$(python3 -c 'import sys; print("%s.%s" % sys.version_info[:2])')"
+if python3 -c 'import sys; raise SystemExit(0 if sys.version_info < (3,7) else 1)'; then
+  REQ_FILE="requirements_legacy.txt"
+  WHEEL_DIR="./wheels/legacy"
+  echo "[!] Legacy Python detected ($PYTHON_VERSION)."
 else
-    echo "[!] Offline mode: Skipping system repository updates and tool installations."
-    echo "[!] Ensure nmap and python3 are already installed on this system."
+  REQ_FILE="requirements.txt"
+  WHEEL_DIR="./wheels/modern"
 fi
 
-# 3. Install Nuclei
-if command -v nuclei &> /dev/null; then
-    echo "[*] Nuclei already installed."
+echo "[*] Installing Python dependencies from $REQ_FILE..."
+if $OFFLINE_MODE; then
+  python3 -m pip install --no-index --find-links="$WHEEL_DIR" -r "$REQ_FILE" --break-system-packages 2>/dev/null \
+    || python3 -m pip install --no-index --find-links="$WHEEL_DIR" -r "$REQ_FILE"
 else
-    if [ "$OFFLINE_MODE" = true ] && [ -f "./bin/nuclei" ]; then
-        echo "[*] Installing Nuclei from local bin/..."
-        sudo cp ./bin/nuclei /usr/local/bin/
-        sudo chmod +x /usr/local/bin/nuclei
-    elif [ "$OFFLINE_MODE" = false ]; then
-        echo "[*] Downloading Nuclei..."
-        ARCH=$(uname -m)
-        if [ "$ARCH" = "x86_64" ]; then N_ARCH="amd64"; else N_ARCH="386"; fi
-        VERSION="3.2.0"
-        TEMP_DIR=$(mktemp -d)
-        if [ -n "$PROXY_URL" ]; then
-            curl -x "$PROXY_URL" -L "https://github.com/projectdiscovery/nuclei/releases/download/v${VERSION}/nuclei_${VERSION}_linux_${N_ARCH}.zip" -o "$TEMP_DIR/nuclei.zip"
-        else
-            curl -L "https://github.com/projectdiscovery/nuclei/releases/download/v${VERSION}/nuclei_${VERSION}_linux_${N_ARCH}.zip" -o "$TEMP_DIR/nuclei.zip"
-        fi
-        unzip -o "$TEMP_DIR/nuclei.zip" -d "$TEMP_DIR"
-        sudo mv "$TEMP_DIR/nuclei" /usr/local/bin/
-        sudo chmod +x /usr/local/bin/nuclei
-        rm -rf "$TEMP_DIR"
-    else
-        echo "[!] Error: No nuclei binary found in bin/ and offline mode is active."
-        exit 1
-    fi
+  PIP_ARGS=()
+  [[ -n "$PROXY_URL" ]] && PIP_ARGS+=(--proxy "$PROXY_URL")
+  python3 -m pip install "${PIP_ARGS[@]}" -r "$REQ_FILE" --break-system-packages 2>/dev/null \
+    || python3 -m pip install "${PIP_ARGS[@]}" -r "$REQ_FILE"
 fi
 
-# 4. Install Python Dependencies
-echo "[*] Installing Python dependencies..."
-PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-IS_LEGACY=$(python3 -c "import sys; print(1 if sys.version_info < (3, 7) else 0)")
-
-REQ_FILE="requirements.txt"
-WHEEL_DIR="./wheels/modern"
-if [ "$IS_LEGACY" -eq 1 ]; then
-    echo "[!] Legacy Python detected ($PYTHON_VERSION)."
-    REQ_FILE="requirements_legacy.txt"
-    WHEEL_DIR="./wheels/legacy"
-fi
-
-if [ "$OFFLINE_MODE" = true ]; then
-    echo "[*] Performing offline pip install from $WHEEL_DIR..."
-    python3 -m pip install --no-index --find-links="$WHEEL_DIR" -r "$REQ_FILE" --break-system-packages 2>/dev/null || python3 -m pip install --no-index --find-links="$WHEEL_DIR" -r "$REQ_FILE"
-else
-    if [ -n "$PROXY_URL" ]; then
-        python3 -m pip install --proxy "$PROXY_URL" -r "$REQ_FILE" --break-system-packages 2>/dev/null || python3 -m pip install --proxy "$PROXY_URL" -r "$REQ_FILE"
-    else
-        python3 -m pip install -r "$REQ_FILE" --break-system-packages 2>/dev/null || python3 -m pip install -r "$REQ_FILE"
-    fi
-fi
-
-# 5. Initialize Nuclei Templates
-if [ "$OFFLINE_MODE" = true ]; then
-    if [ -f "./templates/nuclei-templates.tar.gz" ]; then
-        echo "[*] Offline mode: Templates will be initialized during the first run (Phase 0)."
-    fi
-else
-    echo "[*] Initializing Nuclei templates..."
-    nuclei -ut || echo "Warning: Nuclei template update failed."
-fi
-
-# 6. Create Directories
-echo "[*] Creating environment..."
 mkdir -p output/history logs
 
-echo "----------------------------------------------------------------------"
-echo "  Installation Complete!"
-echo "----------------------------------------------------------------------"
-echo "  To start a test run:"
-    echo "    python3 run_assessment.py --mock"
-echo "----------------------------------------------------------------------"
-
-echo "[*] Installing testssl.sh..."
-if [ ! -d "/usr/local/testssl.sh" ]; then
-    if [ -n "$PROXY_URL" ]; then
-        sudo env http_proxy="$PROXY_URL" https_proxy="$PROXY_URL" HTTP_PROXY="$PROXY_URL" HTTPS_PROXY="$PROXY_URL" git clone --depth 1 https://github.com/drwetter/testssl.sh.git /usr/local/testssl.sh
-    else
-        sudo git clone --depth 1 https://github.com/drwetter/testssl.sh.git /usr/local/testssl.sh
-    fi
-    sudo ln -sf /usr/local/testssl.sh/testssl.sh /usr/local/bin/testssl.sh
+# Nuclei is useful but not required for discovery, enumeration, TLS, or web checks.
+if command -v nuclei >/dev/null 2>&1; then
+  echo "[*] Nuclei already installed."
+  $OFFLINE_MODE || nuclei -ut || warn_optional "Nuclei templates"
+elif $OFFLINE_MODE; then
+  if [[ -x ./bin/nuclei ]]; then
+    run_root cp ./bin/nuclei /usr/local/bin/nuclei
+    run_root chmod +x /usr/local/bin/nuclei
+  else
+    warn_optional "Nuclei (no offline binary in ./bin)"
+  fi
+else
+  echo "[*] Nuclei is not installed. Phase 1 may install it later when internet access is available."
+  warn_optional "Nuclei"
 fi
-echo "[+] testssl.sh installed successfully."
+
+# testssl.sh is optional. DNS/proxy/internet failure must never abort setup.
+if [[ -x scripts/optional_tools.sh ]]; then
+  bash scripts/optional_tools.sh "$@" || true
+elif command -v testssl.sh >/dev/null 2>&1; then
+  echo "[*] testssl.sh already installed."
+else
+  warn_optional "testssl.sh"
+fi
+
+echo "----------------------------------------------------------------------"
+echo "  Installation complete."
+echo "----------------------------------------------------------------------"
+echo "  Harmless test run: python3 run_assessment.py --mock"
+echo "  Guided launcher:    ./easy_assessment.sh"
+echo "----------------------------------------------------------------------"
