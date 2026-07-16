@@ -36,8 +36,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from orchestrator.models import AssessmentReport, AssessmentMetadata
 from orchestrator.phase0_update import Phase0Update
 from orchestrator.phase1_init import Phase1Init
-from orchestrator.phase2_discovery import Phase2Discovery
-from orchestrator.phase3_enum import Phase3Enum
+from orchestrator.expanded_internal_assessment import ExpandedDiscovery, ExpandedServiceEnum
 from orchestrator.phase4_crypto import Phase4Crypto
 from orchestrator.phase5_web import Phase5Web
 from orchestrator.phase6_vulnscan import Phase6VulnScan
@@ -222,8 +221,8 @@ def run_pipeline(config: Dict[str, Any],
     phases = [
         Phase0Update(stealth_cfg),
         Phase1Init(stealth_cfg),
-        Phase2Discovery(stealth_cfg),
-        Phase3Enum(stealth_cfg),
+        ExpandedDiscovery(stealth_cfg),
+        ExpandedServiceEnum(stealth_cfg),
         Phase4Crypto(stealth_cfg),
         Phase5Web(stealth_cfg),
         Phase6VulnScan(stealth_cfg),
