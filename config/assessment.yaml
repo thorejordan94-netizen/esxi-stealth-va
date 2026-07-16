@@ -122,9 +122,10 @@ crypto:
   scan_all_hosts: true
 
 # --- Standalone SSL Automation ---
-# Legacy pre-pipeline HTTPS sweep. Leave subnets empty to reuse vm_discovery.subnets.
+# Legacy pre-pipeline HTTPS sweep. Disabled by default because Phase 4 already
+# performs TLS analysis and the standalone sweep can block on slow endpoints.
 ssl_automation:
-  enabled: true
+  enabled: false
   subnets: []
 
 # --- SSL Labs API Settings ---
