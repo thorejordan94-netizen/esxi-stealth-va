@@ -1,6 +1,7 @@
 import os
 import shutil
 import logging
+import subprocess
 from pathlib import Path
 
 from orchestrator.runtime import run_command
@@ -54,14 +55,18 @@ def scan_network_for_https(subnet="192.168.157.0/24"):
         logging.error(f"[!] Nmap is not available. Cannot scan {subnet}.")
         return []
 
-    nmap_cmd = nmap_base + ["-Pn", "-p", "443", "--open", "-oG", "-", subnet]
+    nmap_cmd = nmap_base + ["-Pn", "-p", "443", "--open", "--host-timeout", "30s", "-oG", "-", subnet]
     try:
         result = run_command(
             nmap_cmd,
             capture_output=True,
             text=True,
             check=True,
+            timeout=180,
         )
+    except subprocess.TimeoutExpired:
+        logging.warning(f"[!] HTTPS discovery timed out for {subnet}; continuing without standalone SSL targets.")
+        return []
     except Exception as e:
         logging.error(f"[!] Nmap scan failed for {subnet}: {e}")
         return []
@@ -76,13 +81,13 @@ def scan_network_for_https(subnet="192.168.157.0/24"):
     return live_hosts
 
 
-def execute_testssl(targets):
+def execute_testssl(targets, timeout_per_host=300):
     if not targets:
         return
 
     testssl_cmd = find_testssl_command()
     if not testssl_cmd:
-        logging.error("[!] testssl.sh not found. Skipping standalone SSL automation.")
+        logging.warning("[!] testssl.sh not found. Skipping standalone SSL automation.")
         return
 
     clean_env = os.environ.copy()
@@ -93,7 +98,7 @@ def execute_testssl(targets):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for ip in targets:
-        logging.info(f"[*] Launching testssl.sh against {ip}...")
+        logging.info(f"[*] Launching testssl.sh against {ip} (timeout={timeout_per_host}s)...")
 
         csv_path = output_dir / f"testssl_{ip}.csv"
         if csv_path.exists():
@@ -102,17 +107,24 @@ def execute_testssl(targets):
         cmd = testssl_cmd + [
             "--quiet",
             "--sneaky",
+            "--connect-timeout", "5",
+            "--openssl-timeout", "5",
             "--csvfile", str(csv_path),
             f"https://{ip}",
         ]
 
-        result = run_command(
-            cmd,
-            env=clean_env,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            result = run_command(
+                cmd,
+                env=clean_env,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=timeout_per_host,
+            )
+        except subprocess.TimeoutExpired:
+            logging.warning(f"[!] testssl.sh timed out for {ip} after {timeout_per_host}s; continuing.")
+            continue
 
         if result.returncode == 0 and csv_path.exists():
             logging.info(f"[+] Scan complete for {ip}. Results saved to {csv_path}")
