@@ -111,7 +111,14 @@ def install_dependencies(args: argparse.Namespace) -> None:
             result = run(commands[package_manager], timeout=args.timeout)
             if result.returncode != 0:
                 raise AssessmentError(f"Package index update failed: {result.stderr.strip()}")
-        result = run([*commands[package_manager], *packages], timeout=args.timeout)
+        install_command = [*prefix, package_manager]
+        if package_manager == "apt-get":
+            install_command.extend(["install", "-y"])
+        elif package_manager == "apk":
+            install_command.append("add")
+        else:
+            install_command.extend(["install", "-y"])
+        result = run([*install_command, *packages], timeout=args.timeout)
         if result.returncode != 0:
             raise AssessmentError(f"Could not install {', '.join(packages)}: {result.stderr.strip()}")
 
