@@ -32,7 +32,7 @@ trap on_error ERR
 
 usage() {
   cat <<USAGE
-Usage: bash easy_assessment.sh [options]
+Usage: bash easy_assessment.sh [options]  # Guided setup and assessment launcher
 
 Options:
   --yes                 Accept safe defaults and reduce questions.
