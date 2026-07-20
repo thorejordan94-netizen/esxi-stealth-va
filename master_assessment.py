@@ -10,6 +10,7 @@ import argparse
 import concurrent.futures
 import datetime as dt
 import html
+import ipaddress
 import json
 import logging
 import shutil
@@ -61,7 +62,7 @@ def parse_args() -> argparse.Namespace:
         description="Run a standalone ESXi/internal service assessment.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("targets", nargs="+", help="IP address, hostname, or CIDR accepted by nmap.")
+    parser.add_argument("targets", nargs="*", help="IP address, hostname, or CIDR accepted by nmap; omitted to discover live hosts on local networks.")
     parser.add_argument("--profile", choices=PROFILES, default="standard", help="Scan intensity preset.")
     parser.add_argument("--ports", help="nmap port expression; overrides the selected profile.")
     parser.add_argument("--output", type=Path, default=Path("assessment-output"), help="Report directory.")
@@ -90,7 +91,49 @@ def run(command: list[str], *, timeout: int, cwd: Path | None = None) -> subproc
         raise AssessmentError(f"Could not run {command[0]}: {exc}") from exc
 
 
-def build_nmap_command(args: argparse.Namespace, xml_path: Path) -> list[str]:
+def local_networks(interface: str | None) -> list[str]:
+    """Return non-loopback IPv4 networks configured on active interfaces."""
+    command = ["ip", "-o", "-4", "addr", "show", "up"]
+    if interface:
+        command.extend(["dev", interface])
+    result = run(command, timeout=30)
+    if result.returncode != 0:
+        raise AssessmentError(f"Could not inspect local interfaces: {result.stderr.strip()}")
+    networks: set[str] = set()
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        try:
+            address = fields[fields.index("inet") + 1]
+            ip, prefix = address.split("/", 1)
+            network = ipaddress.ip_network(f"{ip}/{prefix}", strict=False)
+        except (ValueError, IndexError):
+            continue
+        if not network.is_loopback and network.prefixlen < 32:
+            networks.add(str(network))
+    return sorted(networks)
+
+
+def discover_targets(args: argparse.Namespace, output_dir: Path) -> tuple[list[str], list[str]]:
+    """Discover live hosts on local networks, returning addresses and command."""
+    networks = local_networks(args.interface)
+    if not networks:
+        raise AssessmentError("No non-loopback IPv4 network was found; specify targets explicitly.")
+    command = ["nmap", "-sn", "-PR", "-n", "-oX", str(output_dir / "discovery.xml")]
+    if args.interface:
+        command.extend(["-e", args.interface])
+    command.extend(networks)
+    result = run(command, timeout=args.timeout)
+    if result.returncode not in (0, 1):
+        raise AssessmentError(f"Network discovery failed ({result.returncode}): {result.stderr.strip()}")
+    discovered = parse_nmap(Path(output_dir / "discovery.xml"))
+    targets = [host.address for host in discovered if host.status == "up"]
+    if not targets:
+        raise AssessmentError("Network discovery found no live hosts.")
+    logging.info("Discovered %d live host(s) on %s", len(targets), ", ".join(networks))
+    return targets, command
+
+
+def build_nmap_command(args: argparse.Namespace, xml_path: Path, targets: list[str]) -> list[str]:
     profile = PROFILES[args.profile]
     command = ["nmap", "-sV", f"--version-intensity={profile['intensity']}", "-T2", "--open", "-oX", str(xml_path)]
     ports = args.ports or profile["ports"]
@@ -100,7 +143,7 @@ def build_nmap_command(args: argparse.Namespace, xml_path: Path) -> list[str]:
         command.extend(["-p", ports])
     if args.interface:
         command.extend(["-e", args.interface])
-    command.extend(args.targets)
+    command.extend(targets)
     return command
 
 
@@ -213,9 +256,13 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     timestamp = dt.datetime.now(dt.timezone.utc).isoformat()
+    discovery_command: list[str] = []
+    targets = args.targets
+    if not targets:
+        targets, discovery_command = discover_targets(args, output_dir)
     with tempfile.TemporaryDirectory(prefix="esxi-assessment-", dir=output_dir) as temporary:
         xml_path = Path(temporary) / "nmap.xml"
-        command = build_nmap_command(args, xml_path)
+        command = build_nmap_command(args, xml_path, targets)
         result = run(command, timeout=args.timeout)
         if result.returncode not in (0, 1):
             raise AssessmentError(f"nmap failed ({result.returncode}): {result.stderr.strip()}")
@@ -223,7 +270,7 @@ def main() -> int:
     if not args.no_web_probes:
         collect_web_headers(hosts, args.web_timeout, PROFILES[args.profile]["concurrency"])
     findings = run_nuclei(hosts, args, output_dir) if args.nuclei else []
-    report = {"version": VERSION, "generated_at": timestamp, "profile": args.profile, "targets": args.targets, "nmap_command": command, "nmap_stderr": result.stderr.strip(), "hosts": [asdict(host) for host in hosts], "nuclei_findings": findings}
+    report = {"version": VERSION, "generated_at": timestamp, "profile": args.profile, "targets": targets, "discovery_command": discovery_command, "nmap_command": command, "nmap_stderr": result.stderr.strip(), "hosts": [asdict(host) for host in hosts], "nuclei_findings": findings}
     json_path = output_dir / "assessment_report.json"
     html_path = output_dir / "assessment_report.html"
     json_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
