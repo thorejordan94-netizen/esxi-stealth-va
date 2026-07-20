@@ -1,0 +1,375 @@
+{
+  "metadata": {
+    "target_primary": "10.251.2.28",
+    "target_hostname": "sl001983.de.internal.net",
+    "assessment_type": "Automated Weekly Pentest",
+    "environment": "Internal / Isolated ESXi Network",
+    "started_at": "2026-07-20T15:54:13.775987+00:00",
+    "finished_at": "2026-07-20T15:54:13.778910+00:00",
+    "run_id": "ec080a60-b4b2-42d8-949f-efb5f3f1df60",
+    "executor": "root",
+    "vm_count": 3,
+    "change_request": "",
+    "notes": "",
+    "scan_profile": "standard",
+    "framework_version": "2.0.0",
+    "scan_week": "2026-W29"
+  },
+  "findings_infrastructure": [
+    {
+      "host": "10.251.2.28",
+      "hostname": "sl001983.de.internal.net",
+      "ports": [
+        {
+          "port": 80,
+          "protocol": "tcp",
+          "state": "open",
+          "service": "http",
+          "version": "VMware ESXi redirect"
+        },
+        {
+          "port": 443,
+          "protocol": "tcp",
+          "state": "open",
+          "service": "https",
+          "version": "VMware ESXi 7.0.3 Host Client"
+        },
+        {
+          "port": 902,
+          "protocol": "tcp",
+          "state": "open",
+          "service": "ssl/vmware-auth",
+          "version": "VMware Authentication Daemon"
+        }
+      ],
+      "os_fingerprint": "VMware ESXi 7.0.3",
+      "role": "esxi_host"
+    },
+    {
+      "host": "10.251.2.30",
+      "hostname": "va010",
+      "ports": [
+        {
+          "port": 22,
+          "protocol": "tcp",
+          "state": "open",
+          "service": "ssh",
+          "version": "OpenSSH 8.9p1 Ubuntu 3"
+        },
+        {
+          "port": 80,
+          "protocol": "tcp",
+          "state": "open",
+          "service": "http",
+          "version": "Apache httpd 2.4.57"
+        }
+      ],
+      "os_fingerprint": "",
+      "role": "vm"
+    },
+    {
+      "host": "10.251.2.31",
+      "hostname": "va011",
+      "ports": [
+        {
+          "port": 22,
+          "protocol": "tcp",
+          "state": "open",
+          "service": "ssh",
+          "version": "OpenSSH 8.9p1 Ubuntu 3"
+        },
+        {
+          "port": 443,
+          "protocol": "tcp",
+          "state": "open",
+          "service": "https",
+          "version": "VMware ESXi 7.0.3 Host Client"
+        },
+        {
+          "port": 8080,
+          "protocol": "tcp",
+          "state": "open",
+          "service": "http-proxy",
+          "version": "Apache Tomcat/9.0.65"
+        }
+      ],
+      "os_fingerprint": "",
+      "role": "vm"
+    },
+    {
+      "host": "10.251.2.32",
+      "hostname": "va012",
+      "ports": [
+        {
+          "port": 22,
+          "protocol": "tcp",
+          "state": "open",
+          "service": "ssh",
+          "version": "OpenSSH 8.9p1 Ubuntu 3"
+        },
+        {
+          "port": 445,
+          "protocol": "tcp",
+          "state": "open",
+          "service": "tcp",
+          "version": ""
+        }
+      ],
+      "os_fingerprint": "",
+      "role": "vm"
+    }
+  ],
+  "findings_crypto": [
+    {
+      "host": "10.251.2.28",
+      "port": 443,
+      "certificate": {
+        "subject": "CN=sl001983.de.internal.net",
+        "issuer": "CN=sl001983.de.internal.net",
+        "valid_from": "2024-01-15T00:00:00",
+        "valid_to": "2027-01-15T00:00:00",
+        "self_signed": true,
+        "key_size": 2048,
+        "signature_algorithm": "sha256WithRSAEncryption",
+        "san": [
+          "sl001983.de.internal.net",
+          "10.251.2.28"
+        ]
+      },
+      "tls_versions": {
+        "TLS_1.0": false,
+        "TLS_1.1": false,
+        "TLS_1.2": true,
+        "TLS_1.3": false
+      },
+      "vulnerabilities": [
+        "Self-signed certificate"
+      ],
+      "cipher_suites": [],
+      "grade": "B",
+      "severity": "Medium",
+      "scan_method": "testssl",
+      "ssllabs_result": null
+    },
+    {
+      "host": "10.251.2.31",
+      "port": 443,
+      "certificate": {
+        "subject": "CN=va011",
+        "issuer": "CN=va011",
+        "valid_from": "2024-01-15T00:00:00",
+        "valid_to": "2027-01-15T00:00:00",
+        "self_signed": true,
+        "key_size": 2048,
+        "signature_algorithm": "sha256WithRSAEncryption",
+        "san": [
+          "va011",
+          "10.251.2.31"
+        ]
+      },
+      "tls_versions": {
+        "TLS_1.0": false,
+        "TLS_1.1": true,
+        "TLS_1.2": true,
+        "TLS_1.3": false
+      },
+      "vulnerabilities": [
+        "Self-signed certificate",
+        "TLS 1.1 supported (deprecated)"
+      ],
+      "cipher_suites": [],
+      "grade": "C",
+      "severity": "High",
+      "scan_method": "testssl",
+      "ssllabs_result": null
+    },
+    {
+      "host": "10.251.2.34",
+      "port": 443,
+      "certificate": {
+        "subject": "CN=va014",
+        "issuer": "CN=va014",
+        "valid_from": "2024-01-15T00:00:00",
+        "valid_to": "2027-01-15T00:00:00",
+        "self_signed": true,
+        "key_size": 2048,
+        "signature_algorithm": "sha256WithRSAEncryption",
+        "san": [
+          "va014",
+          "10.251.2.34"
+        ]
+      },
+      "tls_versions": {
+        "TLS_1.0": false,
+        "TLS_1.1": false,
+        "TLS_1.2": true,
+        "TLS_1.3": true
+      },
+      "vulnerabilities": [
+        "Self-signed certificate"
+      ],
+      "cipher_suites": [],
+      "grade": "A-",
+      "severity": "Low",
+      "scan_method": "testssl",
+      "ssllabs_result": null
+    },
+    {
+      "host": "10.251.2.35",
+      "port": 8443,
+      "certificate": {
+        "subject": "CN=va015",
+        "issuer": "CN=va015",
+        "valid_from": "2024-01-15T00:00:00",
+        "valid_to": "2027-01-15T00:00:00",
+        "self_signed": true,
+        "key_size": 2048,
+        "signature_algorithm": "sha256WithRSAEncryption",
+        "san": [
+          "va015",
+          "10.251.2.35"
+        ]
+      },
+      "tls_versions": {
+        "TLS_1.0": true,
+        "TLS_1.1": true,
+        "TLS_1.2": true,
+        "TLS_1.3": false
+      },
+      "vulnerabilities": [
+        "Self-signed certificate",
+        "TLS 1.0 supported (deprecated)",
+        "TLS 1.1 supported (deprecated)"
+      ],
+      "cipher_suites": [],
+      "grade": "D",
+      "severity": "High",
+      "scan_method": "testssl",
+      "ssllabs_result": null
+    },
+    {
+      "host": "10.251.2.38",
+      "port": 443,
+      "certificate": {
+        "subject": "CN=va018",
+        "issuer": "CN=va018",
+        "valid_from": "2024-01-15T00:00:00",
+        "valid_to": "2027-01-15T00:00:00",
+        "self_signed": true,
+        "key_size": 2048,
+        "signature_algorithm": "sha256WithRSAEncryption",
+        "san": [
+          "va018",
+          "10.251.2.38"
+        ]
+      },
+      "tls_versions": {
+        "TLS_1.0": false,
+        "TLS_1.1": false,
+        "TLS_1.2": true,
+        "TLS_1.3": false
+      },
+      "vulnerabilities": [
+        "Self-signed certificate"
+      ],
+      "cipher_suites": [],
+      "grade": "B",
+      "severity": "Medium",
+      "scan_method": "testssl",
+      "ssllabs_result": null
+    }
+  ],
+  "findings_web": [
+    {
+      "host": "10.251.2.28",
+      "port": 443,
+      "url": "https://10.251.2.28",
+      "findings": [
+        {
+          "id": "WEB-100",
+          "title": "Missing HSTS",
+          "severity": "High",
+          "description": "Downgrade risk",
+          "evidence": "Header missing"
+        }
+      ]
+    }
+  ],
+  "findings_vulns": [
+    {
+      "host": "10.251.2.28",
+      "port": 443,
+      "url": "https://10.251.2.28/ui/",
+      "template_id": "ssl-deprecated-protocols",
+      "name": "Deprecated TLS Protocol",
+      "severity": "medium",
+      "description": "The server supports deprecated TLS 1.0/1.1",
+      "matcher_name": "",
+      "evidence": "TLS 1.0 is offered",
+      "reference": [],
+      "tags": [
+        "tls",
+        "ssl",
+        "misconfig"
+      ],
+      "curl_command": "",
+      "scanner": "nuclei",
+      "timestamp": "2026-07-20T15:54:13.778264+00:00"
+    },
+    {
+      "host": "10.251.2.28",
+      "port": 443,
+      "url": "https://10.251.2.28/",
+      "template_id": "http-missing-security-headers",
+      "name": "HTTP Missing Security Headers",
+      "severity": "low",
+      "description": "Several security headers are missing",
+      "matcher_name": "",
+      "evidence": "X-Content-Type-Options missing",
+      "reference": [],
+      "tags": [
+        "headers",
+        "misconfig"
+      ],
+      "curl_command": "",
+      "scanner": "nuclei",
+      "timestamp": "2026-07-20T15:54:13.778280+00:00"
+    }
+  ],
+  "delta": {
+    "previous_run_id": "historical-uuid-123",
+    "previous_scan_week": "2024-W15",
+    "current_run_id": "ec080a60-b4b2-42d8-949f-efb5f3f1df60",
+    "current_scan_week": "2026-W29",
+    "entries": [
+      {
+        "change_type": "new",
+        "category": "infrastructure",
+        "summary": "New host discovered: 10.251.2.99",
+        "severity": "Info",
+        "details": {}
+      },
+      {
+        "change_type": "resolved",
+        "category": "vulnerability",
+        "summary": "Resolved: CVE-2021-44228 Log4Shell on 10.251.2.28",
+        "severity": "High",
+        "details": {}
+      },
+      {
+        "change_type": "changed",
+        "category": "crypto",
+        "summary": "TLS Grade improved for 10.251.2.28: B → A",
+        "severity": "Info",
+        "details": {}
+      }
+    ],
+    "summary": {
+      "new": 1,
+      "resolved": 1,
+      "changed": 1,
+      "unchanged": 0
+    }
+  },
+  "execution_errors": []
+}

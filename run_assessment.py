@@ -47,6 +47,7 @@ from orchestrator.network_detector import (
     update_config_with_detected_network,
 )
 from orchestrator.bootstrap import ensure_discovery_prerequisites
+from orchestrator.email_report import send_report
 
 
 def get_ssl_automation_subnets(config):
@@ -118,9 +119,17 @@ def main():
         "--no-install", action="store_true",
         help="Do not automatically install missing tools or Python packages."
     )
+    parser.add_argument(
+        "--setup", action="store_true",
+        help="Open the terminal checkbox setup wizard for scope, settings, and email delivery."
+    )
     parser.set_defaults(auto_network=True)
 
     args = parser.parse_args()
+
+    if args.setup:
+        from setup_wizard import main as setup_main
+        return setup_main(config_dir=PROJECT_ROOT / args.config_dir)
 
     # --- Banner ---
     print("\033[94m")
@@ -217,6 +226,13 @@ def main():
                 d = report.delta.summary
                 print(f"Δ  Delta: \033[91m{d.get('new', 0)} new\033[0m, "
                       f"\033[92m{d.get('resolved', 0)} resolved\033[0m")
+            if config.get("assessment", {}).get("email", {}).get("enabled"):
+                try:
+                    send_report(config, output_dir)
+                    print("✉️  Email report sent")
+                except Exception as email_error:
+                    logging.getLogger(__name__).error("Email delivery failed: %s", email_error)
+                    print(f"⚠️  Email delivery failed: {email_error}")
             exit_code = 0
         else:
             print(f"\n⚠️  Report not generated correctly. Check logs.")

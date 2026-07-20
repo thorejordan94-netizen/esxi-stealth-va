@@ -66,6 +66,7 @@ class Phase3Enum(PhasePlugin):
 
         nmap_base = self._get_nmap_cmd(config)
         net_cfg = stealth_cfg.get("network", {})
+        scan_cfg = (config or {}).get("assessment", {}).get("scan", {})
 
         port_str = ",".join(str(p) for p in ports)
         xml_out = output_dir / f"enum_{host.replace('.', '_')}.xml"
@@ -78,6 +79,7 @@ class Phase3Enum(PhasePlugin):
             f"--scan-delay", f"{net_cfg.get('scan_delay_ms', 50)}ms",
             f"-T{net_cfg.get('timing_template', 2)}",
             "--open",
+            "--host-timeout", str(scan_cfg.get("nmap_host_timeout", "5m")),
             # Safe NSE scripts for service identification
             "--script", "banner,http-title,ssl-cert",
             "-p", port_str,
@@ -89,7 +91,7 @@ class Phase3Enum(PhasePlugin):
         try:
             result = run_command(
                 cmd_parts, capture_output=True, text=True,
-                check=False, timeout=300, strip_proxy=True
+                check=False, timeout=int(scan_cfg.get("host_timeout_s", 300)), strip_proxy=True
             )
             if result.returncode != 0:
                 logger.warning(f"Enum scan failed for {host}: {result.stderr[:200]}")

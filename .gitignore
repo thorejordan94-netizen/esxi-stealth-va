@@ -11,6 +11,9 @@ logs/
 output/
 assessment-output/
 
+# Gmail app-password credential file created by the setup wizard
+config/.email_credentials
+
 # IDE
 .vscode/
 .idea/
