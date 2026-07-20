@@ -5,7 +5,7 @@
     "assessment_type": "Automated Weekly Pentest",
     "environment": "Internal / Isolated ESXi Network",
     "started_at": "2026-07-20T12:13:09.144291+00:00",
-    "finished_at": "2026-07-20T12:14:07.645299+00:00",
+    "finished_at": "2026-07-20T12:14:02.643312+00:00",
     "run_id": "28b96c6f-ca17-4f1b-9e64-87c8c4597874",
     "executor": "root",
     "vm_count": 0,

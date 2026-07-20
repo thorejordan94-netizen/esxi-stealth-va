@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun>
+<?xml-stylesheet href="file:///usr/bin/../share/nmap/nmap.xsl" type="text/xsl"?>
+<!-- Nmap 7.94SVN scan initiated Mon Jul 20 12:13:14 2026 as: /usr/bin/nmap -sT -Pn -&#45;max-rate 100 -&#45;scan-delay 50ms -T2 -sV -&#45;version-intensity 2 -&#45;open -p 22,80,443,427,902,5988,5989,8000,8080,9080,9443 -&#45;top-ports 2000 -oX output/nmap/esxi_host.xml 10.251.2.28 -->
+<nmaprun scanner="nmap" args="/usr/bin/nmap -sT -Pn -&#45;max-rate 100 -&#45;scan-delay 50ms -T2 -sV -&#45;version-intensity 2 -&#45;open -p 22,80,443,427,902,5988,5989,8000,8080,9080,9443 -&#45;top-ports 2000 -oX output/nmap/esxi_host.xml 10.251.2.28" start="1784549594" startstr="Mon Jul 20 12:13:14 2026" version="7.94SVN" xmloutputversion="1.05">
+<scaninfo type="connect" protocol="tcp" numservices="11" services="22,80,427,443,902,5988-5989,8000,8080,9080,9443"/>
+<verbose level="0"/>
+<debugging level="0"/>
+<runstats><finished time="1784549617" timestr="Mon Jul 20 12:13:37 2026" summary="Nmap done at Mon Jul 20 12:13:37 2026; 1 IP address (1 host up) scanned in 23.31 seconds" elapsed="23.31" exit="success"/><hosts up="1" down="0" total="1"/>
+</runstats>
+</nmaprun>
