@@ -173,11 +173,13 @@ class Phase0Update(PhasePlugin):
                     logger.debug(f"  {tool}: {stderr[:100]}")
         
         elif pkg_mgr == "zypper":
-            # Update specific tools only
+            # Update specific tools only (use non-interactive flags to prevent prompts)
             tools = ["nmap", "nikto", "curl"]
             for tool in tools:
+                # Use --non-interactive and auto-agree-with-licenses to avoid interactive prompts
+                cmd = ["sudo", "zypper", "--non-interactive", "install", "--auto-agree-with-licenses", tool]
                 success, stdout, stderr = self._run_cmd(
-                    ["sudo", "zypper", "install", "-y", tool],
+                    cmd,
                     timeout=120
                 )
                 if success:
