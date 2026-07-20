@@ -1,8 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE nmaprun>
 <?xml-stylesheet href="file:///usr/bin/../share/nmap/nmap.xsl" type="text/xsl"?>
-<!-- Nmap 7.94SVN scan initiated Mon Jul 20 11:28:50 2026 as: nmap -sn -PR -n -oX /workspaces/esxi-stealth-va/assessment-output/discovery.xml 10.0.0.0/16 172.17.0.0/16 -->
-<nmaprun scanner="nmap" args="nmap -sn -PR -n -oX /workspaces/esxi-stealth-va/assessment-output/discovery.xml 10.0.0.0/16 172.17.0.0/16" start="1784546930" startstr="Mon Jul 20 11:28:50 2026" version="7.94SVN" xmloutputversion="1.05">
-<verbose level="0"/>
-<debugging level="0"/>
-<taskprogress task="Ping Scan" time="1784547190" percent="67.90" remaining="123" etc="1784547312"/>
+<!-- Nmap 7.94SVN scan initiated Mon Jul 20 11:40:21 2026 as: nmap -sn -PR -n -oX /workspaces/esxi-stealth-va/assessment-output/discovery.xml 10.0.0.0/16 172.17.0.0/16 -->
+<nmaprun scanner="nmap" args="nmap -sn -PR -n -oX /workspaces/esxi-stealth-va/assessment-output/discovery.xml 10.0.0.0/16 172.17.0.0/16" start="1784547621" startstr="Mon Jul 20 11:40:21 2026" version="7.94SVN" xmloutputversion="1.05">

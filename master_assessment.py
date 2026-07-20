@@ -21,7 +21,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 VERSION = "3.0.0"
 SYSTEM_PACKAGES = {"nmap": "nmap", "ip": "iproute2"}
@@ -130,7 +130,7 @@ def install_dependencies(args: argparse.Namespace) -> None:
             raise AssessmentError("nuclei installed, but its Go bin directory is not on PATH.")
 
 
-def run(command: list[str], *, timeout: int, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+def run(command: List[str], *, timeout: int, cwd: Optional[Path] = None) -> subprocess.CompletedProcess:
     logging.debug("Running command: %s", " ".join(command))
     try:
         return subprocess.run(command, universal_newlines=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, cwd=cwd, check=False)
@@ -140,7 +140,7 @@ def run(command: list[str], *, timeout: int, cwd: Path | None = None) -> subproc
         raise AssessmentError(f"Could not run {command[0]}: {exc}") from exc
 
 
-def local_networks(interface: str | None) -> list[str]:
+def local_networks(interface: Optional[str]) -> List[str]:
     """Return non-loopback IPv4 networks configured on active interfaces."""
     command = ["ip", "-o", "-4", "addr", "show", "up"]
     if interface:
@@ -148,7 +148,7 @@ def local_networks(interface: str | None) -> list[str]:
     result = run(command, timeout=30)
     if result.returncode != 0:
         raise AssessmentError(f"Could not inspect local interfaces: {result.stderr.strip()}")
-    networks: set[str] = set()
+    networks: Set[str] = set()
     for line in result.stdout.splitlines():
         fields = line.split()
         try:
@@ -162,7 +162,7 @@ def local_networks(interface: str | None) -> list[str]:
     return sorted(networks)
 
 
-def discover_targets(args: argparse.Namespace, output_dir: Path) -> tuple[list[str], list[str]]:
+def discover_targets(args: argparse.Namespace, output_dir: Path) -> Tuple[List[str], List[str]]:
     """Discover live hosts on local networks, returning addresses and command."""
     networks = local_networks(args.interface)
     if not networks:
@@ -182,7 +182,7 @@ def discover_targets(args: argparse.Namespace, output_dir: Path) -> tuple[list[s
     return targets, command
 
 
-def build_nmap_command(args: argparse.Namespace, xml_path: Path, targets: list[str]) -> list[str]:
+def build_nmap_command(args: argparse.Namespace, xml_path: Path, targets: List[str]) -> List[str]:
     profile = PROFILES[args.profile]
     command = ["nmap", "-sV", f"--version-intensity={profile['intensity']}", "-T2", "--open", "-oX", str(xml_path)]
     ports = args.ports or profile["ports"]
@@ -304,7 +304,7 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     timestamp = dt.datetime.now(dt.timezone.utc).isoformat()
-    discovery_command: list[str] = []
+    discovery_command: List[str] = []
     targets = args.targets
     if not targets:
         targets, discovery_command = discover_targets(args, output_dir)
