@@ -117,7 +117,10 @@ SETTING_GROUP_TITLES = {
 
 
 def _clear_screen():
-    sys.stdout.write("\033[2J\033[H")
+    # Do not emit terminal-clear escape sequences. Some VM consoles and PSM
+    # sessions interpret them as a blank/black display. Keeping the previous
+    # prompts visible is also useful when a setup is interrupted.
+    sys.stdout.write("\n")
     sys.stdout.flush()
 
 

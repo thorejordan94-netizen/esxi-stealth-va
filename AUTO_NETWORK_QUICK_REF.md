@@ -218,8 +218,9 @@ END
 🔒 Uses **stealth timing** to minimize detection
 🔒 **Excludes** critical infrastructure IPs automatically
 🔒 **Logs** all activities for CyberArk integration
-🔒 Automatic private-network discovery is the default; use `--no-auto-network`
-to restrict execution to the configured scope
+🔒 Automatic private-network discovery is used when configured scope is empty;
+use `--auto-network` to force it or `--no-auto-network` to restrict execution
+to the configured scope
 
 ## Full Documentation
 

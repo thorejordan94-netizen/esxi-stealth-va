@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -8,6 +9,12 @@ import setup_wizard
 
 
 class SetupWizardTests(unittest.TestCase):
+    def test_menu_redraw_does_not_emit_screen_clear_escape_codes(self):
+        with patch("setup_wizard.sys.stdout", new_callable=StringIO) as output:
+            setup_wizard._clear_screen()
+
+        self.assertNotIn("\033[2J", output.getvalue())
+
     def test_recommended_defaults_fill_a_new_config(self):
         configs = {}
 

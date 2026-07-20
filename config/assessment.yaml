@@ -5,8 +5,8 @@ target:
   executor: root
   target_domain: sl001983.de.internal.net
 auto_network:
-  include_virtual_interfaces: true
-  allow_public_subnets: true
+  include_virtual_interfaces: false
+  allow_public_subnets: false
   detect_esxi: true
   esxi_detection_timeout_s: 90
   discovery_rate_pps: 2000
@@ -43,7 +43,7 @@ vm_discovery:
 expanded_discovery:
   tcp_ports: ''
   esxi_ports: 22,80,443,427,902,5988,5989,8000,8080,9080,9443
-  allow_public_subnets: true
+  allow_public_subnets: false
   max_addresses_per_subnet: 65536
   max_addresses_per_sweep: 4096
   neighbor_cache: true
@@ -61,7 +61,7 @@ security_tests:
   timeout: 300
   additional_safe_scripts: []
 phases:
-  phase0_update: true
+  phase0_update: false
   phase1_init: true
   phase2_discovery: true
   phase3_enum: true
@@ -87,10 +87,10 @@ crypto:
   prefer_testssl: true
   scan_all_hosts: true
 ssl_automation:
-  enabled: true
+  enabled: false
   subnets: []
 ssllabs:
-  enabled: true
+  enabled: false
   api_url: https://api.ssllabs.com/api/v3
   max_age_hours: 24
   poll_interval_s: 30
@@ -131,13 +131,13 @@ nuclei:
   extra_args: []
 delta:
   enabled: true
-  history_dir: ''
+  history_dir: output/history
   keep_weeks: 12
 update:
-  git_pull: true
-  nuclei_templates: true
+  git_pull: false
+  nuclei_templates: false
   offline_templates_tarball: ''
-  system_tools: true
+  system_tools: false
 environment:
   classification: Internal / Isolated ESXi Network
   assessment_type: Automated Weekly Pentest

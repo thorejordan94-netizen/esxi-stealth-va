@@ -23,6 +23,8 @@ Stealth measures:
 """
 
 import json
+import ipaddress
+import re
 import ssl
 import socket
 import subprocess
@@ -41,6 +43,18 @@ from orchestrator.models import (
 from orchestrator.runtime import get_output_dir, run_command
 
 logger = logging.getLogger(__name__)
+
+
+def _valid_scan_host(host: str) -> bool:
+    """Reject empty/punctuation-only values before invoking external scanners."""
+    value = str(host or "").strip()
+    if value in ("", ".", "..") or any(character.isspace() for character in value):
+        return False
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", value))
 
 
 class SSLLabsClient:
@@ -320,6 +334,9 @@ class Phase4Crypto(PhasePlugin):
     def _run_testssl(self, host: str, port: int, stealth_cfg: Dict[str, Any],
                      output_dir: Path) -> Optional[CryptoFinding]:
         """Run testssl.sh and parse its JSON output."""
+        if not _valid_scan_host(host):
+            logger.warning("Skipping testssl.sh: invalid TLS target %r", host)
+            return None
         testssl_cmd = self._find_testssl()
         if not testssl_cmd:
             return None
@@ -637,14 +654,27 @@ class Phase4Crypto(PhasePlugin):
 
         if scan_all_hosts:
             # Scan ALL discovered hosts that have HTTPS ports
-            targets = report.get_https_hosts()
+            targets = [
+                (host, port) for host, port in report.get_https_hosts()
+                if _valid_scan_host(host) and isinstance(port, int) and 1 <= port <= 65535
+            ]
             if not targets:
                 logger.info("No HTTPS hosts found in discovery results")
         else:
             # Legacy mode: only scan primary target
             target_ip = assessment_cfg.get("target", {}).get("ip", "")
             tls_ports = crypto_cfg.get("tls_ports", [443])
-            targets = [(target_ip, p) for p in tls_ports]
+            targets = []
+            if _valid_scan_host(target_ip):
+                for port in tls_ports:
+                    try:
+                        port_number = int(port)
+                    except (TypeError, ValueError):
+                        continue
+                    if 1 <= port_number <= 65535:
+                        targets.append((target_ip, port_number))
+            if not targets:
+                logger.warning("No valid primary TLS target is configured; skipping Phase 4")
 
         if not targets:
             logger.info("No TLS targets to scan — skipping Phase 4")

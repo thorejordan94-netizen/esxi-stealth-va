@@ -1,9 +1,18 @@
 import os
+import ipaddress
 import shutil
 import logging
 from pathlib import Path
 
 from orchestrator.runtime import run_command
+
+
+def _valid_ipv4(value):
+    try:
+        address = ipaddress.ip_address(str(value).strip())
+    except ValueError:
+        return False
+    return address.version == 4
 
 
 def find_nmap_command():
@@ -71,8 +80,9 @@ def scan_network_for_https(subnet="192.168.157.0/24"):
     live_hosts = []
     for line in result.stdout.splitlines():
         if "443/open" in line:
-            ip = line.split()[1]
-            live_hosts.append(ip)
+            fields = line.split()
+            if len(fields) >= 2 and _valid_ipv4(fields[1]):
+                live_hosts.append(fields[1])
 
     logging.info(f"[+] Discovered {len(live_hosts)} HTTPS target(s): {live_hosts}")
     return live_hosts
@@ -95,6 +105,9 @@ def execute_testssl(targets, output_dir=None):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for ip in targets:
+        if not _valid_ipv4(ip):
+            logging.warning("Skipping standalone testssl.sh target with invalid IP: %r", ip)
+            continue
         logging.info(f"[*] Launching testssl.sh against {ip}...")
 
         csv_path = output_dir / f"testssl_{ip}.csv"

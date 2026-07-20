@@ -6,7 +6,7 @@ ESXi Vulnerability Assessment Framework (v2.1.0)
 Single-command entry point for the expanded automated pentest pipeline.
 
 Usage:
-  python run_assessment.py                # Full assessment (all enabled phases from config)
+  python run_assessment.py                # Configured scope, or auto-detect when scope is empty
   python run_assessment.py --auto-network # Auto-detect network and run assessment
   python run_assessment.py --update       # Force start from Phase 0
   python run_assessment.py --profile thorough  # deep scan (1-65535 ports)
@@ -51,18 +51,34 @@ from orchestrator.email_report import send_report
 
 
 def get_ssl_automation_subnets(config):
-    """Return the subnets the standalone SSL sweep should use."""
+    """Return explicitly configured subnets for the legacy SSL sweep.
+
+    The main pipeline already performs TLS checks on discovered HTTPS hosts.
+    Falling back to every VM-discovery subnet here can launch a second,
+    multi-minute sweep across a /16, so the legacy sweep must be explicitly
+    scoped.
+    """
     assessment_cfg = config.get("assessment", {})
     ssl_cfg = assessment_cfg.get("ssl_automation", {})
-    if not ssl_cfg.get("enabled", True):
+    if not ssl_cfg.get("enabled", False):
         return []
 
     configured_subnets = ssl_cfg.get("subnets")
-    if configured_subnets:
-        return [subnet for subnet in configured_subnets if subnet]
+    if not isinstance(configured_subnets, (list, tuple)):
+        return []
+    return [subnet.strip() for subnet in configured_subnets if isinstance(subnet, str) and subnet.strip()]
 
-    vm_subnets = assessment_cfg.get("vm_discovery", {}).get("subnets", [])
-    return [subnet for subnet in vm_subnets if subnet]
+
+def has_configured_scope(config):
+    """Whether normal execution has a usable target/scope already configured."""
+    assessment = config.get("assessment", {})
+    target = assessment.get("target", {}) or {}
+    discovery = assessment.get("vm_discovery", {}) or {}
+    return bool(
+        str(target.get("ip") or target.get("hostname") or target.get("target_domain") or "").strip()
+        or discovery.get("static_ips")
+        or discovery.get("subnets")
+    )
 
 def main():
     # Fix Windows console encoding
@@ -109,7 +125,7 @@ def main():
     )
     parser.add_argument(
         "--auto-network", dest="auto_network", action="store_true",
-        help="Automatically detect network configuration and run assessment (default)."
+        help="Automatically detect network configuration and run assessment."
     )
     parser.add_argument(
         "--no-auto-network", dest="auto_network", action="store_false",
@@ -123,7 +139,9 @@ def main():
         "--setup", action="store_true",
         help="Open the terminal checkbox setup wizard for scope, settings, and email delivery."
     )
-    parser.set_defaults(auto_network=True)
+    # With an explicit target/subnet, respect the setup wizard's scope. Empty
+    # configs still get automatic private-network discovery below.
+    parser.set_defaults(auto_network=None)
 
     args = parser.parse_args()
 
@@ -155,6 +173,13 @@ def main():
     if not output_dir.is_absolute():
         output_dir = PROJECT_ROOT / output_dir
     config["_output_dir"] = str(output_dir)
+
+    if args.auto_network is None:
+        args.auto_network = not has_configured_scope(config)
+        if args.auto_network:
+            print("[*] No target scope is configured; automatic private-network discovery is enabled.")
+        else:
+            print("[*] Using the target/subnets from configuration. Use --auto-network to override.")
 
     # Auto-detect network if requested
     if args.auto_network and not args.dry_run and not args.mock:
