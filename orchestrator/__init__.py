@@ -1,1 +1,0 @@
-# ESXi Vulnerability Assessment Framework
