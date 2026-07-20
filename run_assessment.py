@@ -46,6 +46,7 @@ from orchestrator.network_detector import (
     auto_detect_network,
     update_config_with_detected_network,
 )
+from orchestrator.tui import launch as launch_tui
 
 
 def get_ssl_automation_subnets(config):
@@ -105,8 +106,15 @@ def main():
         "--auto-network", action="store_true",
         help="Automatically detect network configuration and run assessment."
     )
+    parser.add_argument(
+        "--interactive", action="store_true",
+        help="Start the guided interactive terminal interface."
+    )
 
     args = parser.parse_args()
+
+    if args.interactive:
+        return launch_tui()
 
     # --- Banner ---
     print("\033[94m")
@@ -207,4 +215,4 @@ def main():
     print()
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)

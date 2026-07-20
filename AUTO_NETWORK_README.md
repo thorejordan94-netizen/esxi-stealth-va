@@ -17,6 +17,16 @@ That's it! The tool will:
 
 ## Quick Start
 
+### Option 0: Guided interactive terminal interface
+```bash
+python3 run_assessment.py --interactive
+```
+
+The TUI guides you through setup validation, a harmless mock-data demo, profile
+selection, authorization confirmation, running an assessment, and locating the
+latest report. It requires an interactive terminal; it never starts a real scan
+without a final confirmation.
+
 ### Option 1: Fastest - Bash Wrapper
 ```bash
 chmod +x auto_assess.sh
