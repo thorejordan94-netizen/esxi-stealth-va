@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """Standalone ESXi/internal service assessment runner.
 
-Requires: Python 3.9+ and nmap. Nuclei is used when installed.
+Requires: Python 3.6+ and nmap. Nuclei is used when installed.
 The runner writes JSON and self-contained HTML reports without Python packages.
 """
-from __future__ import annotations
-
 import argparse
 import concurrent.futures
 import datetime as dt
@@ -21,7 +19,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 VERSION = "3.0.0"
 PROFILES = {
@@ -48,8 +46,8 @@ class Host:
     address: str
     status: str
     hostname: str = ""
-    services: list[Service] = field(default_factory=list)
-    web_headers: dict[str, dict[str, str]] = field(default_factory=dict)
+    services: List[Service] = field(default_factory=list)
+    web_headers: Dict[str, Dict[str, str]] = field(default_factory=dict)
 
 
 class AssessmentError(RuntimeError):
@@ -80,22 +78,22 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def run(command: list[str], *, timeout: int, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+def run(command: List[str], *, timeout: int, cwd: Optional[Path] = None) -> subprocess.CompletedProcess:
     logging.debug("Running command: %s", " ".join(command))
     try:
-        return subprocess.run(command, text=True, capture_output=True, timeout=timeout, cwd=cwd, check=False)
+        return subprocess.run(command, universal_newlines=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, cwd=cwd, check=False)
     except subprocess.TimeoutExpired as exc:
         raise AssessmentError(f"Command timed out after {timeout}s: {command[0]}") from exc
     except OSError as exc:
         raise AssessmentError(f"Could not run {command[0]}: {exc}") from exc
 
 
-def build_nmap_command(args: argparse.Namespace, xml_path: Path) -> list[str]:
+def build_nmap_command(args: argparse.Namespace, xml_path: Path) -> List[str]:
     profile = PROFILES[args.profile]
     command = ["nmap", "-sV", f"--version-intensity={profile['intensity']}", "-T2", "--open", "-oX", str(xml_path)]
     ports = args.ports or profile["ports"]
     if ports.startswith("top-"):
-        command.extend(["--top-ports", ports.removeprefix("top-")])
+        command.extend(["--top-ports", ports[len("top-"):]])
     else:
         command.extend(["-p", ports])
     if args.interface:
@@ -104,16 +102,16 @@ def build_nmap_command(args: argparse.Namespace, xml_path: Path) -> list[str]:
     return command
 
 
-def text(element: ET.Element | None, attribute: str, default: str = "") -> str:
+def text(element: Optional[ET.Element], attribute: str, default: str = "") -> str:
     return element.get(attribute, default) if element is not None else default
 
 
-def parse_nmap(xml_path: Path) -> list[Host]:
+def parse_nmap(xml_path: Path) -> List[Host]:
     try:
         root = ET.parse(xml_path).getroot()
     except (ET.ParseError, OSError) as exc:
         raise AssessmentError(f"Unable to parse nmap XML report: {exc}") from exc
-    hosts: list[Host] = []
+    hosts = []  # type: List[Host]
     for node in root.findall("host"):
         address = text(node.find("address[@addrtype='ipv4']"), "addr") or text(node.find("address[@addrtype='ipv6']"), "addr")
         if not address:
@@ -133,7 +131,7 @@ def parse_nmap(xml_path: Path) -> list[Host]:
     return hosts
 
 
-def probe_headers(host: tuple[Host, str], timeout: float) -> tuple[str, dict[str, str]]:
+def probe_headers(host: Tuple[Host, str], timeout: float) -> Tuple[str, Dict[str, str]]:
     url, headers = host
     request = urllib.request.Request(url, method="HEAD", headers={"User-Agent": f"esxi-assessment/{VERSION}"})
     try:
@@ -145,8 +143,8 @@ def probe_headers(host: tuple[Host, str], timeout: float) -> tuple[str, dict[str
         return url, {"error": str(exc.reason) if isinstance(exc, urllib.error.URLError) else str(exc)}
 
 
-def collect_web_headers(hosts: list[Host], timeout: float, workers: int) -> None:
-    work: list[tuple[Host, str]] = []
+def collect_web_headers(hosts: List[Host], timeout: float, workers: int) -> None:
+    work = []  # type: List[Tuple[Host, str]]
     for host in hosts:
         for service in host.services:
             scheme = WEB_PORTS.get(service.port)
@@ -165,7 +163,7 @@ def collect_web_headers(hosts: list[Host], timeout: float, workers: int) -> None
             host.web_headers[url] = headers
 
 
-def run_nuclei(hosts: Iterable[Host], args: argparse.Namespace, output_dir: Path) -> list[dict[str, Any]]:
+def run_nuclei(hosts: Iterable[Host], args: argparse.Namespace, output_dir: Path) -> List[Dict[str, Any]]:
     nuclei = shutil.which("nuclei")
     if not nuclei:
         logging.warning("nuclei was requested but is not installed; skipping vulnerability templates")
@@ -185,7 +183,7 @@ def run_nuclei(hosts: Iterable[Host], args: argparse.Namespace, output_dir: Path
         logging.warning("nuclei ended with %d: %s", result.returncode, result.stderr.strip())
     if not findings_file.exists():
         return []
-    findings: list[dict[str, Any]] = []
+    findings = []  # type: List[Dict[str, Any]]
     for line in findings_file.read_text(encoding="utf-8", errors="replace").splitlines():
         try:
             findings.append(json.loads(line))
@@ -194,7 +192,7 @@ def run_nuclei(hosts: Iterable[Host], args: argparse.Namespace, output_dir: Path
     return findings
 
 
-def render_html(report: dict[str, Any]) -> str:
+def render_html(report: Dict[str, Any]) -> str:
     def esc(value: Any) -> str: return html.escape(str(value))
     host_rows = []
     for host in report["hosts"]:
