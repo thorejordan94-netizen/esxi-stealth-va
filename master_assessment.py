@@ -82,7 +82,6 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-<<<<<<< HEAD
 def install_dependencies(args: argparse.Namespace) -> None:
     """Install the small set of external tools this runner needs when absent."""
     missing = [executable for executable in SYSTEM_PACKAGES if not shutil.which(executable)]
@@ -132,9 +131,6 @@ def install_dependencies(args: argparse.Namespace) -> None:
 
 
 def run(command: list[str], *, timeout: int, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-=======
-def run(command: List[str], *, timeout: int, cwd: Optional[Path] = None) -> subprocess.CompletedProcess:
->>>>>>> c52ed2dcb4773d6420f2a3cfb47a56fb006ac721
     logging.debug("Running command: %s", " ".join(command))
     try:
         return subprocess.run(command, universal_newlines=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, cwd=cwd, check=False)
@@ -144,7 +140,6 @@ def run(command: List[str], *, timeout: int, cwd: Optional[Path] = None) -> subp
         raise AssessmentError(f"Could not run {command[0]}: {exc}") from exc
 
 
-<<<<<<< HEAD
 def local_networks(interface: str | None) -> list[str]:
     """Return non-loopback IPv4 networks configured on active interfaces."""
     command = ["ip", "-o", "-4", "addr", "show", "up"]
@@ -188,9 +183,6 @@ def discover_targets(args: argparse.Namespace, output_dir: Path) -> tuple[list[s
 
 
 def build_nmap_command(args: argparse.Namespace, xml_path: Path, targets: list[str]) -> list[str]:
-=======
-def build_nmap_command(args: argparse.Namespace, xml_path: Path) -> List[str]:
->>>>>>> c52ed2dcb4773d6420f2a3cfb47a56fb006ac721
     profile = PROFILES[args.profile]
     command = ["nmap", "-sV", f"--version-intensity={profile['intensity']}", "-T2", "--open", "-oX", str(xml_path)]
     ports = args.ports or profile["ports"]
