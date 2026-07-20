@@ -1,0 +1,7 @@
+pyyaml==6.0.1
+cryptography==40.0.2
+requests==2.27.1
+jinja2==3.0.3
+markupsafe==2.0.1
+packaging==21.3
+dataclasses==0.8

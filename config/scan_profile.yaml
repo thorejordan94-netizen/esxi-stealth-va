@@ -1,0 +1,52 @@
+# ============================================================================
+# Scan Profile — Intensity Presets
+# ============================================================================
+# Three profiles: quick (minimal noise), standard (balanced), thorough (deep)
+# Select the active profile in this file or via --profile CLI argument.
+# ============================================================================
+
+active_profile: "standard"
+
+profiles:
+  # --- Quick: Minimal footprint, fast execution (~15 min for /24) ---
+  quick:
+    description: "Fast scan with minimal footprint. Good for initial recon."
+    ports: "top-100"
+    version_intensity: 1
+    nuclei_rate: 100
+    nuclei_concurrency: 25
+    nuclei_severity: "critical,high"
+    skip_nikto: true
+    skip_ssllabs: true
+    # Stealth overrides (less aggressive than profile defaults)
+    max_rate_pps: 200
+    scan_delay_ms: 20
+    http_request_delay_s: 1.0
+
+  # --- Standard: Balanced coverage + stealth (~1-2 hours for /24) ---
+  standard:
+    description: "Balanced scan with good coverage and acceptable noise level."
+    ports: "top-1000"
+    version_intensity: 2
+    nuclei_rate: 50
+    nuclei_concurrency: 10
+    nuclei_severity: "critical,high,medium"
+    skip_nikto: false
+    skip_ssllabs: false
+    max_rate_pps: 100
+    scan_delay_ms: 50
+    http_request_delay_s: 2.0
+
+  # --- Thorough: Deep analysis, all ports (~4-8 hours for /24) ---
+  thorough:
+    description: "Exhaustive scan covering all TCP ports. Very slow, very noisy."
+    ports: "1-65535"
+    version_intensity: 5
+    nuclei_rate: 25
+    nuclei_concurrency: 5
+    nuclei_severity: "critical,high,medium,low"
+    skip_nikto: false
+    skip_ssllabs: false
+    max_rate_pps: 50
+    scan_delay_ms: 100
+    http_request_delay_s: 3.0
