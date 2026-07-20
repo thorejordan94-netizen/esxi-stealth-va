@@ -13,6 +13,7 @@ import html
 import ipaddress
 import json
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -25,6 +26,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 VERSION = "3.0.0"
+SYSTEM_PACKAGES = {"nmap": "nmap", "ip": "iproute2"}
 PROFILES = {
     "quick": {"ports": "top-100", "intensity": 1, "rate": 100, "concurrency": 8},
     "standard": {"ports": "top-1000", "intensity": 2, "rate": 50, "concurrency": 4},
@@ -67,6 +69,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ports", help="nmap port expression; overrides the selected profile.")
     parser.add_argument("--output", type=Path, default=Path("assessment-output"), help="Report directory.")
     parser.add_argument("--interface", help="Network interface passed to nmap with -e.")
+    parser.add_argument("--no-install", action="store_true", help="Do not install missing system or optional tools automatically.")
     parser.add_argument("--nuclei", action="store_true", help="Run installed nuclei templates against discovered HTTP(S) services.")
     parser.add_argument("--nuclei-templates", type=Path, help="Optional local nuclei template directory.")
     parser.add_argument("--timeout", type=int, default=1800, help="Maximum seconds for the nmap process.")
@@ -79,6 +82,47 @@ def parse_args() -> argparse.Namespace:
     if args.nuclei_templates and not args.nuclei:
         parser.error("--nuclei-templates requires --nuclei")
     return args
+
+
+def install_dependencies(args: argparse.Namespace) -> None:
+    """Install the small set of external tools this runner needs when absent."""
+    missing = [executable for executable in SYSTEM_PACKAGES if not shutil.which(executable)]
+    if not missing and (not args.nuclei or shutil.which("nuclei")):
+        return
+    if args.no_install:
+        required = ", ".join(missing) or "nuclei"
+        raise AssessmentError(f"Missing tool(s): {required}. Re-run without --no-install to install them.")
+
+    package_manager = next((tool for tool in ("apt-get", "dnf", "yum", "apk") if shutil.which(tool)), None)
+    if missing:
+        if not package_manager:
+            raise AssessmentError("Missing required tools and no supported package manager was found: " + ", ".join(missing))
+        packages = [SYSTEM_PACKAGES[item] for item in missing]
+        prefix = [] if os.geteuid() == 0 else ["sudo"]
+        if prefix and not shutil.which("sudo"):
+            raise AssessmentError("Installing tools requires root or sudo privileges.")
+        commands = {
+            "apt-get": [*prefix, "apt-get", "update"],
+            "dnf": [*prefix, "dnf", "install", "-y"],
+            "yum": [*prefix, "yum", "install", "-y"],
+            "apk": [*prefix, "apk", "add"],
+        }
+        if package_manager == "apt-get":
+            result = run(commands[package_manager], timeout=args.timeout)
+            if result.returncode != 0:
+                raise AssessmentError(f"Package index update failed: {result.stderr.strip()}")
+        result = run([*commands[package_manager], *packages], timeout=args.timeout)
+        if result.returncode != 0:
+            raise AssessmentError(f"Could not install {', '.join(packages)}: {result.stderr.strip()}")
+
+    if args.nuclei and not shutil.which("nuclei"):
+        if not shutil.which("go"):
+            raise AssessmentError("--nuclei was requested, but nuclei and Go are not installed.")
+        result = run(["go", "install", "github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"], timeout=args.timeout)
+        if result.returncode != 0:
+            raise AssessmentError(f"Could not install nuclei: {result.stderr.strip()}")
+        if not shutil.which("nuclei"):
+            raise AssessmentError("nuclei installed, but its Go bin directory is not on PATH.")
 
 
 def run(command: list[str], *, timeout: int, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -250,8 +294,7 @@ def render_html(report: dict[str, Any]) -> str:
 
 def main() -> int:
     args = parse_args()
-    if not shutil.which("nmap"):
-        raise AssessmentError("nmap is required but was not found on PATH")
+    install_dependencies(args)
     output_dir = args.output.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
