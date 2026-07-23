@@ -1,21 +1,15 @@
 """
-Central Orchestrator — Phase-Driven Execution Engine (v2.1.0)
+Central Orchestrator — Phase-Driven Execution Engine (v2.2.0)
 
-Runs all 8 phases in strict sequential order:
-  Phase 0: Self-Update
-  Phase 1: Initialization & Scoping
-  Phase 2: Stealth Discovery (nmap)
-  Phase 3: Service Enumeration
-  Phase 4: Crypto Analysis (testssl.sh / SSL Labs / Python ssl)
-  Phase 5: Web Assessment (curl probes / nikto)
-  Phase 6: Vulnerability Scanning (nuclei)
-  Phase 7: Delta Analysis & Archiving
+Runs all 8 phases in strict dependency order. Independent targets inside the
+network, service, TLS, and web phases are processed concurrently by the
+full-coverage implementations.
 
-Design decisions:
-- Sequential execution — stealth over speed
-- State persistence after each phase (crash recovery)
-- CyberArk-aware audit logging at every phase boundary
-- Single JSON output and HTML report as the final deliverables
+Final deliverables:
+- normalized and context-enriched JSON
+- contextual Markdown
+- self-contained HTML
+- phase state checkpoints for crash recovery
 """
 
 import os
@@ -25,8 +19,8 @@ import json
 import logging
 import yaml
 from pathlib import Path
-from datetime import datetime, timezone
-from typing import Dict, Any, Optional
+from datetime import datetime
+from typing import Dict, Any
 
 # Ensure project root is in PYTHONPATH
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -36,10 +30,13 @@ if str(PROJECT_ROOT) not in sys.path:
 from orchestrator.models import AssessmentReport, AssessmentMetadata
 from orchestrator.phase0_update import Phase0Update
 from orchestrator.phase1_init import Phase1Init
-from orchestrator.expanded_internal_assessment import ExpandedDiscovery, ExpandedServiceEnum
-from orchestrator.phase4_crypto import Phase4Crypto
-from orchestrator.phase5_web import Phase5Web
-from orchestrator.phase6_vulnscan import Phase6VulnScan
+from orchestrator.full_coverage import (
+    FullCoverageCrypto,
+    FullCoverageDiscovery,
+    FullCoverageServiceEnum,
+    FullCoverageVulnScan,
+    FullCoverageWeb,
+)
 from orchestrator.phase7_delta import Phase7Delta
 from orchestrator.runtime import get_output_dir
 
@@ -63,69 +60,63 @@ def setup_logging(log_dir: Path):
     log_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = log_dir / f"assessment_{timestamp}.log"
+    log_file = log_dir / "assessment_{}.log".format(timestamp)
 
     formatter = logging.Formatter(
-        '%(asctime)s | %(levelname)-8s | %(name)-25s | %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
+        "%(asctime)s | %(levelname)-8s | %(name)-25s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
 
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)
 
-    # File handler (DEBUG level — everything)
-    fh = logging.FileHandler(log_file, encoding='utf-8')
+    fh = logging.FileHandler(log_file, encoding="utf-8")
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(formatter)
     root.addHandler(fh)
 
-    # Console handler (INFO level — clean output)
     ch = logging.StreamHandler(sys.stdout)
     ch.setLevel(logging.INFO)
     ch.setFormatter(formatter)
     root.addHandler(ch)
 
-    logger.info(f"Logging initialized: {log_file}")
+    logger.info("Logging initialized: %s", log_file)
     return log_file
 
 
 def load_config(config_dir: Path) -> Dict[str, Any]:
-    """Load and merge all YAML config files."""
+    """Load and merge all YAML configuration files."""
     config = {}
-
     expected_files = ["assessment.yaml", "stealth_profile.yaml", "scan_profile.yaml"]
     for config_file in expected_files:
         path = config_dir / config_file
         if not path.exists():
-            logger.error(f"Config file not found: {path}")
+            logger.error("Config file not found: %s", path)
             sys.exit(1)
 
-        with open(path, 'r', encoding='utf-8') as f:
-            data = yaml.safe_load(f) or {}
+        with open(path, "r", encoding="utf-8") as handle:
+            data = yaml.safe_load(handle) or {}
 
-        # Namespace configs
         if config_file == "assessment.yaml":
             config["assessment"] = data
         elif config_file == "stealth_profile.yaml":
             config["stealth"] = data
         elif config_file == "scan_profile.yaml":
             config["scan_profile"] = data
-
     return config
 
 
 def apply_scan_profile(config: Dict[str, Any]) -> Dict[str, Any]:
-    """Overlay the active scan profile onto the base config."""
+    """Overlay the active scan profile onto the base configuration."""
     scan_profile = config.get("scan_profile", {})
-    active_name = scan_profile.get("active_profile", "standard")
+    active_name = scan_profile.get("active_profile", "thorough")
     profile = scan_profile.get("profiles", {}).get(active_name, {})
     if not profile:
-        logger.warning(f"Scan profile '{active_name}' not found. Using base config values.")
+        logger.warning("Scan profile '%s' not found. Using base config values.", active_name)
         return config
 
     assessment_cfg = config.setdefault("assessment", {})
     stealth_cfg = config.setdefault("stealth", {})
-
     scan_cfg = assessment_cfg.setdefault("scan", {})
     web_cfg = assessment_cfg.setdefault("web", {})
     nuclei_cfg = assessment_cfg.setdefault("nuclei", {})
@@ -155,7 +146,7 @@ def apply_scan_profile(config: Dict[str, Any]) -> Dict[str, Any]:
     if "skip_ssllabs" in profile:
         ssllabs_cfg["enabled"] = ssllabs_cfg.get("enabled", False) and not profile["skip_ssllabs"]
 
-    logger.info(f"Applied scan profile '{active_name}'")
+    logger.info("Applied scan profile '%s'", active_name)
     return config
 
 
@@ -164,7 +155,6 @@ def is_phase_enabled(config: Dict[str, Any], phase_number: int) -> bool:
     phase_key = PHASE_TOGGLE_NAMES.get(phase_number)
     if phase_key is None:
         return True
-
     phases_cfg = config.get("assessment", {}).get("phases", {})
     return phases_cfg.get(phase_key, True)
 
@@ -177,19 +167,40 @@ def determine_default_start_phase(config: Dict[str, Any]) -> int:
     return 1
 
 
-def run_pipeline(config: Dict[str, Any],
-                 start_phase: int = 1,
-                 mock_mode: bool = False,
-                 dry_run: bool = False):
-    """
-    Execute the assessment pipeline.
+def _generate_final_reports(report: AssessmentReport, output_dir: Path):
+    """Write all final report formats while preserving raw phase state."""
+    final_json = output_dir / "assessment_report.json"
+    markdown_path = output_dir / "assessment_report.md"
+    html_path = output_dir / "assessment_report.html"
 
-    Args:
-        config: Merged configuration dict
-        start_phase: Resume from this phase (0-7)
-        mock_mode: If True, generate synthetic data instead of real scans
-        dry_run: If True, validate config and check tools only (Phase 1)
-    """
+    try:
+        from orchestrator.finding_knowledge import write_enriched_json
+        write_enriched_json(report, str(final_json))
+        logger.info("Enriched JSON report generated: %s", final_json)
+    except Exception as exc:
+        logger.error("Failed to generate enriched JSON report: %s", exc, exc_info=True)
+        # A normalized report is preferable to no JSON deliverable.
+        report.flush_to_disk(str(final_json))
+
+    try:
+        from orchestrator.report_markdown import generate_report as generate_markdown
+        generate_markdown(report, str(markdown_path))
+    except Exception as exc:
+        logger.error("Failed to generate Markdown report: %s", exc, exc_info=True)
+        report.add_error("reporting", "markdown", "Markdown report generation failed: {}".format(exc))
+
+    try:
+        from orchestrator.report_html import generate_report as generate_html
+        generate_html(report, str(html_path))
+        logger.info("HTML report generated: %s", html_path)
+    except Exception as exc:
+        logger.error("Failed to generate HTML report: %s", exc, exc_info=True)
+        report.add_error("reporting", "html", "HTML report generation failed: {}".format(exc))
+
+
+def run_pipeline(config: Dict[str, Any], start_phase: int = 1,
+                 mock_mode: bool = False, dry_run: bool = False):
+    """Execute the assessment pipeline."""
     if mock_mode:
         os.environ["ASSESSMENT_MOCK_MODE"] = "1"
         logger.info("╔══════════════════════════════════════════════╗")
@@ -198,16 +209,14 @@ def run_pipeline(config: Dict[str, Any],
 
     apply_scan_profile(config)
     stealth_cfg = config.get("stealth", {})
-
-    # --- Initialize the report model ---
     output_dir = get_output_dir(config)
     state_file = output_dir / "assessment_state.json"
     state_file.parent.mkdir(parents=True, exist_ok=True)
 
     if start_phase > 1 and state_file.exists():
-        logger.info(f"Resuming from Phase {start_phase} — loading state from {state_file}")
-        with open(state_file, 'r', encoding='utf-8') as f:
-            report = AssessmentReport.from_dict(json.load(f))
+        logger.info("Resuming from Phase %s — loading state from %s", start_phase, state_file)
+        with open(state_file, "r", encoding="utf-8") as handle:
+            report = AssessmentReport.from_dict(json.load(handle))
     else:
         target = config.get("assessment", {}).get("target", {})
         report = AssessmentReport(
@@ -217,82 +226,73 @@ def run_pipeline(config: Dict[str, Any],
             )
         )
 
+    report.metadata.scan_profile = config.get("scan_profile", {}).get("active_profile", "thorough")
+    report.metadata.framework_version = "2.2.0"
     config["_dry_run"] = dry_run
 
-    # --- Build phase pipeline ---
     phases = [
         Phase0Update(stealth_cfg),
         Phase1Init(stealth_cfg),
-        ExpandedDiscovery(stealth_cfg),
-        ExpandedServiceEnum(stealth_cfg),
-        Phase4Crypto(stealth_cfg),
-        Phase5Web(stealth_cfg),
-        Phase6VulnScan(stealth_cfg),
+        FullCoverageDiscovery(stealth_cfg),
+        FullCoverageServiceEnum(stealth_cfg),
+        FullCoverageCrypto(stealth_cfg),
+        FullCoverageWeb(stealth_cfg),
+        FullCoverageVulnScan(stealth_cfg),
         Phase7Delta(stealth_cfg),
     ]
 
-    # --- Safety: max runtime ---
-    max_runtime = stealth_cfg.get("general", {}).get("max_runtime_s", 28800) # Increased to 8h for thorough scans
+    # A value of zero disables the overall runtime ceiling. Per-command and
+    # per-host timeouts still prevent an individual external process from hanging.
+    max_runtime = int(stealth_cfg.get("general", {}).get("max_runtime_s", 0) or 0)
     pipeline_start = time.time()
 
-    # --- Execute phases ---
     for phase in phases:
         if not is_phase_enabled(config, phase.phase_number):
-            logger.info(f"Skipping Phase {phase.phase_number} ({phase.name}) - disabled in config")
+            logger.info("Skipping Phase %s (%s) - disabled in config", phase.phase_number, phase.name)
             continue
         if phase.phase_number < start_phase:
-            logger.info(f"Skipping Phase {phase.phase_number} ({phase.name}) — resuming from {start_phase}")
+            logger.info("Skipping Phase %s (%s) — resuming from %s", phase.phase_number, phase.name, start_phase)
             continue
-
         if dry_run and phase.phase_number > 1:
             logger.info("Dry-run complete. Exiting after Phase 1.")
             break
 
-        # Runtime safety check
         elapsed = time.time() - pipeline_start
-        if elapsed > max_runtime:
-            logger.error(f"Max runtime ({max_runtime}s) exceeded. Aborting at Phase {phase.phase_number}.")
+        if max_runtime > 0 and elapsed > max_runtime:
+            logger.error("Max runtime (%ss) exceeded. Aborting at Phase %s.", max_runtime, phase.phase_number)
             report.add_error(
-                f"phase{phase.phase_number}_{phase.name.lower()}",
+                "phase{}_{}".format(phase.phase_number, phase.name.lower()),
                 "orchestrator",
-                f"Pipeline aborted — max runtime exceeded ({elapsed:.0f}s > {max_runtime}s)"
+                "Pipeline aborted — max runtime exceeded ({:.0f}s > {}s)".format(elapsed, max_runtime),
             )
             break
 
-        logger.info(f"Starting Phase {phase.phase_number}: {phase.name}")
+        logger.info("Starting Phase %s: %s", phase.phase_number, phase.name)
         try:
             phase.run(report, config)
-        except Exception as e:
-            logger.critical(f"FATAL: Phase {phase.phase_number} ({phase.name}) crashed: {e}",
-                            exc_info=True)
+        except Exception as exc:
+            logger.critical(
+                "FATAL: Phase %s (%s) crashed: %s", phase.phase_number, phase.name, exc,
+                exc_info=True,
+            )
             report.add_error(
-                f"phase{phase.phase_number}_{phase.name.lower()}",
-                "orchestrator",
-                f"Unrecoverable crash: {e}"
+                "phase{}_{}".format(phase.phase_number, phase.name.lower()),
+                "orchestrator", "Unrecoverable crash: {}".format(exc),
             )
 
-        # Flush state after each phase for crash recovery
         report.flush_to_disk(str(state_file))
-        logger.debug(f"State checkpoint saved to {state_file}")
+        logger.debug("State checkpoint saved to %s", state_file)
 
-    # --- Final Generation ---
     if not dry_run:
         report.set_finished()
         report.flush_to_disk(str(state_file))
-        final_report = output_dir / "assessment_report.json"
-        report.flush_to_disk(str(final_report))
-        try:
-            from orchestrator.report_html import generate_report
-            html_path = output_dir / "assessment_report.html"
-            generate_report(report, str(html_path))
-            logger.info(f"HTML Report generated: {html_path}")
-        except Exception as e:
-            logger.error(f"Failed to generate HTML report: {e}")
+        _generate_final_reports(report, output_dir)
+        # Persist reporting errors, if any, after report generation.
+        report.flush_to_disk(str(state_file))
 
     total_time = time.time() - pipeline_start
-    logger.info(f"Pipeline completed in {total_time:.1f}s ({total_time/60:.1f}m)")
+    logger.info("Pipeline completed in %.1fs (%.1fm)", total_time, total_time / 60)
 
     if mock_mode:
         os.environ.pop("ASSESSMENT_MOCK_MODE", None)
-
     return report
