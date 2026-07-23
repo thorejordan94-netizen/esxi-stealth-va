@@ -8,9 +8,9 @@ auto_network:
   include_virtual_interfaces: false
   allow_public_subnets: false
   detect_esxi: true
-  esxi_detection_timeout_s: 90
-  discovery_rate_pps: 2000
-  max_esxi_candidates: 1024
+  esxi_detection_timeout_s: 300
+  discovery_rate_pps: 5000
+  max_esxi_candidates: 65535
 vm_discovery:
   method: sweep
   subnets:
@@ -25,9 +25,9 @@ vm_discovery:
   max_hosts: 0
   discovery_probes:
     enabled: true
-    mode: fallback
-    ps_ports: 22,80,443,902,5989
-    pa_ports: 80,443
+    mode: always
+    ps_ports: 21,22,23,25,53,80,110,135,139,143,389,443,445,636,902,1433,1521,2049,2375,2376,3306,3389,5432,5985,5986,5989,6379,8000,8080,8443,9080,9443
+    pa_ports: 22,80,443,445,3389,5985,5986
   known_vms:
   - v268tmp
   - va010
@@ -44,21 +44,26 @@ expanded_discovery:
   tcp_ports: ''
   esxi_ports: 22,80,443,427,902,5988,5989,8000,8080,9080,9443
   allow_public_subnets: false
-  max_addresses_per_subnet: 65536
+  max_addresses_per_subnet: 0
   max_addresses_per_sweep: 4096
   neighbor_cache: true
   udp:
     enabled: true
-    top_ports: 20
-    version_intensity: 1
+    ports: top-20
+    version_intensity: 2
     max_retries: 1
-    timeout: 300
+    max_rate_pps: 2000
+    timing_template: 4
+    scan_delay_ms: 0
+    timeout: 7200
 security_tests:
   enabled: true
-  max_ports_per_host: 128
-  script_timeout: 45s
-  host_timeout: 5m
-  timeout: 300
+  max_ports_per_host: 0
+  ports_per_batch: 256
+  parallel_hosts: 6
+  script_timeout: 90s
+  host_timeout: 30m
+  timeout: 7200
   additional_safe_scripts: []
 phases:
   phase0_update: false
@@ -70,13 +75,17 @@ phases:
   phase6_vulnscan: true
   phase7_delta: true
 scan:
-  ports: top-1000
-  esxi_ports: 80,443,902,5989,8000,8080,9080
-  version_intensity: 2
-  max_retries: 1
-  nmap_host_timeout: 5m
-  host_timeout_s: 300
-  esxi_timeout_s: 300
+  ports: 1-65535
+  esxi_ports: 22,80,443,427,902,5988,5989,8000,8080,9080,9443
+  version_intensity: 5
+  max_retries: 2
+  parallel_hosts: 6
+  discovery_max_rate_pps: 2000
+  timing_template: 4
+  scan_delay_ms: 0
+  nmap_host_timeout: 30m
+  host_timeout_s: 7200
+  esxi_timeout_s: 7200
   progress_interval_s: 15
 stealth:
   network:
@@ -84,8 +93,8 @@ stealth:
 crypto:
   tls_ports:
   - '443'
-  prefer_testssl: true
   scan_all_hosts: true
+  prefer_testssl: true
 ssl_automation:
   enabled: false
   subnets: []
@@ -106,28 +115,25 @@ web:
   - /mob
   - /host
   - /
-  verify_ssl: true
+  verify_ssl: false
   scan_all_hosts: true
   use_nikto: true
+  nikto_timeout_s: 3600
+  nikto_tuning: ''
+  parallel_targets: 4
 nuclei:
   enabled: true
   templates_dir: ''
-  severity_filter: critical,high,medium
-  rate_limit: 50
-  concurrency: 10
-  timeout: 10
-  tags:
-  - cve
-  - misconfig
-  - exposure
-  - default-login
-  - tech
+  severity_filter: critical,high,medium,low,info
+  rate_limit: 150
+  concurrency: 50
+  timeout: 15
+  execution_timeout_s: 86400
+  tags: []
   exclude_tags:
   - dos
   - fuzz
   - intrusive
-  - sqli
-  - xss
   extra_args: []
 delta:
   enabled: true
@@ -140,9 +146,9 @@ update:
   system_tools: false
 environment:
   classification: Internal / Isolated ESXi Network
-  assessment_type: Automated Weekly Pentest
+  assessment_type: Comprehensive Vulnerability Assessment
   change_request: ''
-  notes: Wöchentlicher automatisierter Pentest — ESXi-Netzwerk mit 50+ VMs
+  notes: Vollständige private Scope-Abdeckung mit allen TCP-/UDP-Ports und kontextueller Ergebnisbewertung.
 tool_paths:
   nmap: /usr/bin/nmap
   nuclei: /usr/local/bin/nuclei
@@ -155,6 +161,7 @@ email:
   subject: ESXi assessment report
   scope:
   - HTML report
+  - Markdown report
   - JSON report
   - Delta summary
   - Errors and health status

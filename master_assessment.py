@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """One-command launcher for the comprehensive ESXi assessment pipeline.
 
-This launcher intentionally stays compatible with the Python 3.6 runtime used
-by the original openSUSE/SLES assessment host.  With no command-line options it
-enables automatic local-network discovery and runs every configured phase.
+This launcher stays compatible with the Python 3.6 runtime used by the original
+openSUSE/SLES assessment host. With no command-line options it lets
+``run_assessment.py`` use every configured subnet and target. Automatic local
+network detection is used only when no scope is configured or when
+``--auto-network`` is explicitly supplied.
 """
 
 import importlib
@@ -101,8 +103,6 @@ def main():
         raise RuntimeError("Comprehensive assessment runner is missing: {}".format(runner))
 
     _install_python_dependencies()
-    if len(sys.argv) == 1:
-        sys.argv.append("--auto-network")
     sys.argv[0] = str(runner)
     runpy.run_path(str(runner), run_name="__main__")
 
