@@ -1,20 +1,16 @@
 """Comprehensive scan phases with complete port coverage and bounded parallelism.
 
-The quality-preserving speed optimization is a two-stage TCP workflow:
-Phase 2 discovers every open TCP port without expensive version probes; Phase 3
-runs version detection and safe NSE checks only against ports confirmed open.
-Independent hosts are processed concurrently, while every result remains tied to
-its source asset and port.
+The quality-preserving speed optimization is a two-stage TCP workflow: Phase 2
+discovers every open TCP port without expensive version probes; Phase 3 runs
+version detection and safe NSE checks only against confirmed-open ports.
+Independent hosts are processed concurrently and results retain source context.
 """
-
-from __future__ import annotations
 
 import copy
 import ipaddress
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from orchestrator.expanded_internal_assessment import ExpandedDiscovery, ExpandedServiceEnum
 from orchestrator.models import AssessmentReport, HostFinding, PortEntry, WebAssessmentResult
@@ -26,13 +22,13 @@ from orchestrator.runtime import get_output_dir
 logger = logging.getLogger(__name__)
 
 
-def _chunks(values: Sequence[Any], size: int) -> Iterable[Sequence[Any]]:
+def _chunks(values, size):
     size = max(1, int(size))
     for index in range(0, len(values), size):
         yield values[index:index + size]
 
 
-def _is_web_service(port: PortEntry) -> bool:
+def _is_web_service(port):
     service = str(port.service or "").lower()
     version = str(port.version or "").lower()
     combined = "{} {}".format(service, version)
@@ -43,7 +39,7 @@ def _is_web_service(port: PortEntry) -> bool:
     )
 
 
-def _is_tls_web_service(port: PortEntry) -> bool:
+def _is_tls_web_service(port):
     service = str(port.service or "").lower()
     version = str(port.version or "").lower()
     return (
@@ -58,7 +54,7 @@ def _is_tls_web_service(port: PortEntry) -> bool:
 class ComprehensiveDiscovery(ExpandedDiscovery):
     """Discover every host in configured private scopes and every TCP/UDP port."""
 
-    def _validate_private_subnet(self, subnet: str, config: Dict[str, Any]):
+    def _validate_private_subnet(self, subnet, config):
         try:
             network = ipaddress.ip_network(subnet, strict=False)
         except ValueError:
@@ -67,13 +63,15 @@ class ComprehensiveDiscovery(ExpandedDiscovery):
         if network.version != 4:
             logger.warning("Skipping non-IPv4 subnet: %s", network)
             return None
-        allow_public = bool(config.get("assessment", {}).get("expanded_discovery", {}).get("allow_public_subnets", False))
+        allow_public = bool(
+            config.get("assessment", {}).get("expanded_discovery", {}).get("allow_public_subnets", False)
+        )
         if not allow_public and not network.is_private:
             logger.error("Refusing public subnet in automatic scope: %s", network)
             return None
         return network
 
-    def _udp_scan(self, host: str, config: Dict[str, Any], output_dir: Path):
+    def _udp_scan(self, host, config, output_dir):
         expanded = config.get("assessment", {}).get("expanded_discovery", {})
         udp_cfg = expanded.get("udp", {})
         if not udp_cfg.get("enabled", True):
@@ -106,27 +104,34 @@ class ComprehensiveDiscovery(ExpandedDiscovery):
         parsed = self._parse_nmap_xml(output_xml)
         return parsed[0].ports if parsed else []
 
-    def _scan_host(self, address: str, config: Dict[str, Any], common_flags: List[str],
-                   port_args: List[str], interface: str, configured_interface: str,
-                   output_dir: Path, host_timeout: int):
+    def _scan_host(self, address, config, common_flags, port_args, interface,
+                   configured_interface, output_dir, host_timeout):
         scanner = ComprehensiveDiscovery(self.stealth_config)
         host_flags = list(common_flags)
         resolved_interface = scanner._resolve_interface(interface or configured_interface, address)
         if resolved_interface:
             host_flags.extend(["-e", resolved_interface])
-        xml_path = output_dir / "host_{}.xml".format(address.replace(".", "_"))
-        if not scanner._run_nmap(host_flags + port_args + [address], xml_path, config, timeout=host_timeout):
-            return address, [], scanner._last_nmap_error
 
-        findings = scanner._parse_nmap_xml(xml_path)
+        xml_path = output_dir / "host_{}.xml".format(address.replace(".", "_"))
+        tcp_error = ""
+        if scanner._run_nmap(host_flags + port_args + [address], xml_path, config, timeout=host_timeout):
+            findings = scanner._parse_nmap_xml(xml_path)
+        else:
+            findings = []
+            tcp_error = scanner._last_nmap_error
+
+        udp_ports = scanner._udp_scan(address, config, output_dir)
+        if not findings:
+            findings = [HostFinding(host=address, role="vm")]
         for finding in findings:
             finding.role = "esxi_host" if scanner._looks_like_esxi(finding) else "vm"
-            udp_ports = scanner._udp_scan(address, config, output_dir)
             if udp_ports:
                 scanner._merge_ports(finding, udp_ports)
-        return address, findings, ""
+                if scanner._looks_like_esxi(finding):
+                    finding.role = "esxi_host"
+        return address, findings, tcp_error
 
-    def execute(self, report: AssessmentReport, config: Dict[str, Any]):
+    def execute(self, report, config):
         runtime_config = copy.deepcopy(config)
         assessment = runtime_config.setdefault("assessment", {})
         stealth = runtime_config.get("stealth", {})
@@ -147,8 +152,8 @@ class ComprehensiveDiscovery(ExpandedDiscovery):
             "interface", network_cfg.get("interface", "")
         )
 
-        # Stage 1 intentionally omits -sV. Version detection is performed only
-        # on confirmed-open ports in ComprehensiveServiceEnum.
+        # Stage 1 omits -sV. Phase 3 performs expensive identification only on
+        # ports that this stage proves open.
         common_flags = [
             "-sT", "-Pn", "-n",
             "--max-rate", str(scan_cfg.get("discovery_max_rate_pps", network_cfg.get("max_rate_pps", 1000))),
@@ -173,8 +178,12 @@ class ComprehensiveDiscovery(ExpandedDiscovery):
                 scan_cfg["ports"], scan_cfg["esxi_ports"],
                 output_dir, runtime_config, int(scan_cfg.get("esxi_timeout_s", 7200)),
             )
+            if not primary:
+                primary = [HostFinding(host=target_ip, hostname=target_hostname, role="esxi_host")]
+                report.add_error("phase2_discovery", "nmap", "Primary TCP scan produced no usable result")
+            udp_ports = self._udp_scan(target_ip, runtime_config, output_dir)
             for finding in primary:
-                udp_ports = self._udp_scan(finding.host, runtime_config, output_dir)
+                finding.role = "esxi_host"
                 if udp_ports:
                     self._merge_ports(finding, udp_ports)
                 report.add_host(finding)
@@ -244,8 +253,7 @@ class ComprehensiveDiscovery(ExpandedDiscovery):
                     report.add_error("phase2_discovery", "parallel_scan", "Host scan failed for {}: {}".format(address, exc))
                     continue
                 if error:
-                    report.add_error("phase2_discovery", "nmap", "Host scan failed for {}: {}".format(address, error))
-                    continue
+                    report.add_error("phase2_discovery", "nmap", "TCP scan failed for {}: {}".format(address, error))
                 for finding in findings:
                     if finding.role == "esxi_host" and not report.metadata.target_primary:
                         report.metadata.target_primary = finding.host
@@ -259,8 +267,7 @@ class ComprehensiveDiscovery(ExpandedDiscovery):
 class ComprehensiveServiceEnum(ExpandedServiceEnum):
     """Enumerate every confirmed-open service without truncating per-host ports."""
 
-    def _enumerate_host(self, host: HostFinding, config: Dict[str, Any], output_dir: Path,
-                        version_intensity: int, chunk_size: int):
+    def _enumerate_host(self, host, config, output_dir, version_intensity, chunk_size):
         scanner = ComprehensiveServiceEnum(self.stealth_config)
         findings = []
         selected = sorted(host.ports, key=lambda item: (item.protocol, item.port))
@@ -277,7 +284,7 @@ class ComprehensiveServiceEnum(ExpandedServiceEnum):
                 findings.extend(scanner._derive_findings(host.host, results))
         return findings
 
-    def execute(self, report: AssessmentReport, config: Dict[str, Any]):
+    def execute(self, report, config):
         security_cfg = config.get("assessment", {}).get("security_tests", {})
         if not security_cfg.get("enabled", True):
             return
@@ -316,15 +323,15 @@ class ComprehensiveServiceEnum(ExpandedServiceEnum):
 
 
 class ComprehensiveWeb(Phase5Web):
-    """Assess every service identified as HTTP or HTTPS, regardless of port number."""
+    """Assess every service identified as HTTP or HTTPS, regardless of port."""
 
-    def _base_url_for_entry(self, host: str, port: PortEntry) -> str:
+    def _base_url_for_entry(self, host, port):
         scheme = "https" if _is_tls_web_service(port) else "http"
         if (scheme, port.port) in {("http", 80), ("https", 443)}:
             return "{}://{}".format(scheme, host)
         return "{}://{}:{}".format(scheme, host, port.port)
 
-    def _assess_target(self, host: HostFinding, port: PortEntry, config: Dict[str, Any], output_dir: Path):
+    def _assess_target(self, host, port, config, output_dir):
         web_cfg = config.get("assessment", {}).get("web", {})
         stealth_cfg = config.get("stealth", {})
         ua = stealth_cfg.get("http", {}).get("user_agent", "Mozilla/5.0")
@@ -339,7 +346,7 @@ class ComprehensiveWeb(Phase5Web):
             findings.extend(self._run_nikto(host.host, port.port, output_dir))
         return WebAssessmentResult(host=host.host, port=port.port, url=base_url, findings=findings)
 
-    def execute(self, report: AssessmentReport, config: Dict[str, Any]):
+    def execute(self, report, config):
         output_dir = get_output_dir(config) / "web"
         output_dir.mkdir(parents=True, exist_ok=True)
         targets = [
@@ -369,7 +376,7 @@ class ComprehensiveWeb(Phase5Web):
 class ComprehensiveVulnScan(Phase6VulnScan):
     """Feed Nuclei every discovered endpoint, including non-standard web ports."""
 
-    def _prepare_targets(self, report: AssessmentReport, config: Dict[str, Any]) -> Optional[Path]:
+    def _prepare_targets(self, report, config):
         targets = set()
         for host in report.findings_infrastructure:
             if host.host:
