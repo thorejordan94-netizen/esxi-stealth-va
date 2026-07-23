@@ -12,6 +12,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SCOPE_HTML = "HTML report"
 SCOPE_JSON = "JSON report"
+SCOPE_MARKDOWN = "Markdown report"
 SCOPE_DELTA = "Delta summary"
 SCOPE_HEALTH = "Errors and health status"
 
@@ -46,10 +47,12 @@ def _report_data(output_dir):
 def _body_for_scope(scope, output_dir, mail):
     data = _report_data(output_dir)
     metadata = data.get("metadata", {})
+    contextual = data.get("contextual_analysis", {})
     lines = [
         "ESXi assessment report",
         "Target: {} ({})".format(metadata.get("target_primary", "unknown"), metadata.get("target_hostname", "unknown")),
         "Run ID: {}".format(metadata.get("run_id", "unknown")),
+        "Risk: {} ({}/100)".format(contextual.get("risk_rating", "unknown"), contextual.get("risk_score", "unknown")),
         "",
     ]
 
@@ -67,11 +70,15 @@ def _body_for_scope(scope, output_dir, mail):
 
     if SCOPE_HEALTH in scope:
         errors = data.get("execution_errors") or []
-        html_exists = (Path(output_dir) / "assessment_report.html").exists()
-        json_exists = (Path(output_dir) / "assessment_report.json").exists()
+        output = Path(output_dir)
+        files = {
+            "JSON": output / "assessment_report.json",
+            "Markdown": output / "assessment_report.md",
+            "HTML": output / "assessment_report.html",
+        }
         lines.append("Errors and health status:")
-        lines.append("  Report JSON: {}".format("OK" if json_exists else "MISSING"))
-        lines.append("  Report HTML: {}".format("OK" if html_exists else "MISSING"))
+        for label, path in files.items():
+            lines.append("  Report {}: {}".format(label, "OK" if path.exists() else "MISSING"))
         lines.append("  Delivery backend: {}".format(mail.get("backend", "unknown")))
         if errors:
             lines.append("  Assessment errors: {}".format(len(errors)))
@@ -85,8 +92,6 @@ def _body_for_scope(scope, output_dir, mail):
             lines.append("  Assessment errors: none")
         lines.append("")
 
-    if len(lines) == 4:
-        lines.append("The requested report files are attached.")
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -96,7 +101,8 @@ def build_message(config, output_dir):
     if not mail.get("enabled"):
         return None
 
-    scope = set(mail.get("scope") or [SCOPE_HTML, SCOPE_JSON, SCOPE_DELTA, SCOPE_HEALTH])
+    default_scope = [SCOPE_HTML, SCOPE_JSON, SCOPE_MARKDOWN, SCOPE_DELTA, SCOPE_HEALTH]
+    scope = set(mail.get("scope") or default_scope)
     message = EmailMessage()
     message["Subject"] = mail.get("subject", "ESXi assessment report")
     message["From"] = mail.get("sender") or mail["recipient"]
@@ -108,14 +114,11 @@ def build_message(config, output_dir):
         attachments.append((Path(output_dir) / "assessment_report.html", "text", "html"))
     if SCOPE_JSON in scope:
         attachments.append((Path(output_dir) / "assessment_report.json", "application", "json"))
+    if SCOPE_MARKDOWN in scope:
+        attachments.append((Path(output_dir) / "assessment_report.md", "text", "markdown"))
     for path, maintype, subtype in attachments:
         if path.exists():
-            message.add_attachment(
-                path.read_bytes(),
-                maintype=maintype,
-                subtype=subtype,
-                filename=path.name,
-            )
+            message.add_attachment(path.read_bytes(), maintype=maintype, subtype=subtype, filename=path.name)
     return message
 
 

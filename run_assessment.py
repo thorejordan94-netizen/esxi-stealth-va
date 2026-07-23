@@ -1,26 +1,23 @@
 #!/usr/bin/env python3
 """
-ESXi Vulnerability Assessment Framework (v2.1.0)
+ESXi Vulnerability Assessment Framework (v2.2.0)
 ================================================
 
-Single-command entry point for the expanded automated pentest pipeline.
+Single-command entry point for the comprehensive internal assessment pipeline.
 
 Usage:
-  python run_assessment.py                # Configured scope, or auto-detect when scope is empty
-  python run_assessment.py --auto-network # Auto-detect network and run assessment
-  python run_assessment.py --update       # Force start from Phase 0
-  python run_assessment.py --profile thorough  # deep scan (1-65535 ports)
-  python run_assessment.py --mock         # Full pipeline with synthetic data
-  python run_assessment.py --phase 6      # Resume from Nuclei vuln scanning
-
-Environment:
-  ASSESSMENT_MOCK_MODE=1   → Activates mock mode
+  python run_assessment.py
+  python run_assessment.py --auto-network
+  python run_assessment.py --profile thorough
+  python run_assessment.py --mock
+  python run_assessment.py --phase 6
 
 Output:
-  output/assessment_report.json  → Final JSON report
-  output/assessment_report.html  → Premium HTML report
-  output/history/YYYY-Wxx/       → Archived reports
-  logs/assessment_*.log          → Audit log
+  output/assessment_report.json  -> enriched machine-readable report
+  output/assessment_report.md    -> contextual human-readable report
+  output/assessment_report.html  -> self-contained HTML report
+  output/history/YYYY-Wxx/       -> archived reports
+  logs/assessment_*.log          -> audit log
 """
 
 import sys
@@ -29,12 +26,10 @@ import logging
 import io
 from pathlib import Path
 
-# Ensure project root is in path
 PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# Cleaned up imports (no duplicates)
 from orchestrator.main import (
     determine_default_start_phase,
     load_config,
@@ -53,16 +48,13 @@ from orchestrator.email_report import send_report
 def get_ssl_automation_subnets(config):
     """Return explicitly configured subnets for the legacy SSL sweep.
 
-    The main pipeline already performs TLS checks on discovered HTTPS hosts.
-    Falling back to every VM-discovery subnet here can launch a second,
-    multi-minute sweep across a /16, so the legacy sweep must be explicitly
-    scoped.
+    The main pipeline already performs TLS checks on discovered TLS endpoints.
+    The legacy sweep therefore runs only when explicitly enabled and scoped.
     """
     assessment_cfg = config.get("assessment", {})
     ssl_cfg = assessment_cfg.get("ssl_automation", {})
     if not ssl_cfg.get("enabled", False):
         return []
-
     configured_subnets = ssl_cfg.get("subnets")
     if not isinstance(configured_subnets, (list, tuple)):
         return []
@@ -80,92 +72,67 @@ def has_configured_scope(config):
         or discovery.get("subnets")
     )
 
+
 def main():
-    # Fix Windows console encoding
-    if sys.stdout.encoding != 'utf-8':
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+    if sys.stdout.encoding != "utf-8":
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
     parser = argparse.ArgumentParser(
         description="ESXi Vulnerability Assessment Framework",
-        formatter_class=argparse.RawDescriptionHelpFormatter
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-
-    parser.add_argument(
-        "--update", action="store_true",
-        help="Force the pipeline to start from Phase 0 (Self-Update)."
-    )
+    parser.add_argument("--update", action="store_true", help="Force the pipeline to start from Phase 0 (Self-Update).")
     parser.add_argument(
         "--profile", type=str, choices=["quick", "standard", "thorough"], default=None,
-        help="Scan intensity profile (defaults to value in scan_profile.yaml)."
+        help="Scan profile. Thorough is the full-coverage default; quick intentionally reduces coverage.",
     )
-    parser.add_argument(
-        "--dry-run", action="store_true",
-        help="Validate configuration and check tool availability, then exit."
-    )
-    parser.add_argument(
-        "--mock", action="store_true",
-        help="Run the full pipeline with synthetic mock data."
-    )
+    parser.add_argument("--dry-run", action="store_true", help="Validate configuration and tool availability, then exit.")
+    parser.add_argument("--mock", action="store_true", help="Run the full pipeline with synthetic mock data.")
     parser.add_argument(
         "--phase", type=int, choices=range(0, 8), default=None,
-        help="Resume pipeline from this phase number (0-7)."
+        help="Resume pipeline from this phase number (0-7).",
     )
-    parser.add_argument(
-        "--no-delta", action="store_true",
-        help="Skip phase 7 (Delta Analysis)."
-    )
-    parser.add_argument(
-        "--config-dir", type=str, default="config",
-        help="Path to configuration directory (default: ./config)."
-    )
+    parser.add_argument("--no-delta", action="store_true", help="Skip Phase 7 (Delta Analysis).")
+    parser.add_argument("--config-dir", type=str, default="config", help="Configuration directory (default: ./config).")
     parser.add_argument(
         "--output-dir", "--output", dest="output_dir", type=str, default=None,
-        help="Report/artifact directory (default: <project>/output)."
+        help="Report/artifact directory (default: <project>/output).",
     )
     parser.add_argument(
         "--auto-network", dest="auto_network", action="store_true",
-        help="Automatically detect network configuration and run assessment."
+        help="Automatically detect private network configuration and run assessment.",
     )
     parser.add_argument(
         "--no-auto-network", dest="auto_network", action="store_false",
-        help="Use only the targets and subnets from the configuration files."
+        help="Use only targets and subnets from the configuration files.",
     )
-    parser.add_argument(
-        "--no-install", action="store_true",
-        help="Do not automatically install missing tools or Python packages."
-    )
+    parser.add_argument("--no-install", action="store_true", help="Do not automatically install missing tools or packages.")
     parser.add_argument(
         "--setup", action="store_true",
-        help="Open the terminal checkbox setup wizard for scope, settings, and email delivery."
+        help="Open the terminal setup wizard for scope, settings, and email delivery.",
     )
-    # With an explicit target/subnet, respect the setup wizard's scope. Empty
-    # configs still get automatic private-network discovery below.
     parser.set_defaults(auto_network=None)
-
     args = parser.parse_args()
 
     if args.setup:
         from setup_wizard import main as setup_main
         return setup_main(config_dir=PROJECT_ROOT / args.config_dir)
 
-    # --- Banner ---
     print("\033[94m")
     print("╔══════════════════════════════════════════════════════════════════╗")
-    print("║     ESXi Vulnerability Assessment Framework v2.1.0               ║")
-    print("║     Automated Weekly Pentest Orchestrator                        ║")
-    print("║     Internal Use Only — CyberArk PSM Monitored                   ║")
+    print("║     ESXi Vulnerability Assessment Framework v2.2.0               ║")
+    print("║     Full Coverage + Contextual Reporting                         ║")
+    print("║     Internal Use Only — Authorized Scope Required                ║")
     print("╚══════════════════════════════════════════════════════════════════╝")
     print("\033[0m")
 
-    # --- Setup ---
     log_dir = PROJECT_ROOT / "logs"
     log_file = setup_logging(log_dir)
-
     config_dir = PROJECT_ROOT / args.config_dir
     if not config_dir.exists():
-        print(f"ERROR: Config directory not found: {config_dir}")
-        sys.exit(1)
+        print("ERROR: Config directory not found: {}".format(config_dir))
+        return 1
 
     config = load_config(config_dir)
     config["_auto_install"] = not args.no_install
@@ -179,28 +146,24 @@ def main():
         if args.auto_network:
             print("[*] No target scope is configured; automatic private-network discovery is enabled.")
         else:
-            print("[*] Using the target/subnets from configuration. Use --auto-network to override.")
+            print("[*] Using configured target/subnets. Use --auto-network to override.")
 
-    # Auto-detect network if requested
     if args.auto_network and not args.dry_run and not args.mock:
         print("\n[*] Auto-detecting network configuration...")
         prerequisite_status = ensure_discovery_prerequisites(auto_install=not args.no_install)
         if not prerequisite_status.get("ip"):
             print("ERROR: The 'ip' command is required for automatic network detection.")
-            sys.exit(1)
+            return 1
         detected = auto_detect_network(config)
         config = update_config_with_detected_network(config, detected)
+        if not detected["subnets"]:
+            print("ERROR: Failed to auto-detect a private network. Configure scope manually or check connectivity.")
+            return 1
 
-        if not detected['subnets']:
-            print("ERROR: Failed to auto-detect network. Please configure manually or check network connectivity.")
-            sys.exit(1)
-
-    # Override scan profile if specified via CLI
     if args.profile:
         config["scan_profile"]["active_profile"] = args.profile
-        print(f"[*] Overriding scan profile: {args.profile}")
+        print("[*] Overriding scan profile: {}".format(args.profile))
 
-    # Determine start phase
     start_phase = determine_default_start_phase(config)
     if args.update:
         start_phase = 0
@@ -208,25 +171,17 @@ def main():
         start_phase = args.phase
     if args.dry_run:
         start_phase = 1
-
-    # Disable delta if requested
     if args.no_delta:
         config["assessment"]["phases"]["phase7_delta"] = False
 
-    # --- Run Pipeline ---
     try:
-        # --> TRIGGER SSL AUTOMATION BEFORE MAIN PIPELINE <--
-        # We skip it during a dry-run so it doesn't accidentally launch Nmap
         if not args.dry_run and not args.mock:
             ssl_subnets = get_ssl_automation_subnets(config)
             if ssl_subnets:
                 run_ssl_automation(subnets=ssl_subnets, output_dir=output_dir)
             else:
-                logging.getLogger(__name__).info(
-                    "Skipping standalone SSL automation because no subnets are configured."
-                )
+                logging.getLogger(__name__).info("Skipping standalone SSL automation because no subnets are configured.")
 
-        # Now run the main framework pipeline
         report = run_pipeline(
             config=config,
             start_phase=start_phase,
@@ -234,46 +189,48 @@ def main():
             dry_run=args.dry_run,
         )
 
-        # --- Final output ---
         json_path = output_dir / "assessment_report.json"
+        markdown_path = output_dir / "assessment_report.md"
         html_path = output_dir / "assessment_report.html"
 
         if args.dry_run:
-            print(f"\n\033[92mDry-run completed successfully\033[0m")
+            print("\n\033[92mDry-run completed successfully\033[0m")
             exit_code = 0
         elif json_path.exists():
-            print(f"\n\033[92m✅ Assessment Completed Successfully\033[0m")
-            print(f"📊 JSON Report: {json_path.absolute()}")
+            print("\n\033[92mAssessment completed successfully\033[0m")
+            print("JSON report: {}".format(json_path.absolute()))
+            if markdown_path.exists():
+                print("Markdown report: {}".format(markdown_path.absolute()))
             if html_path.exists():
-                print(f"🖥️  HTML Report: {html_path.absolute()}")
+                print("HTML report: {}".format(html_path.absolute()))
 
-            if report and hasattr(report, 'delta') and report.delta:
-                d = report.delta.summary
-                print(f"Δ  Delta: \033[91m{d.get('new', 0)} new\033[0m, "
-                      f"\033[92m{d.get('resolved', 0)} resolved\033[0m")
+            if report and getattr(report, "delta", None):
+                delta = report.delta.summary
+                print("Delta: {} new, {} resolved".format(delta.get("new", 0), delta.get("resolved", 0)))
+
             if config.get("assessment", {}).get("email", {}).get("enabled"):
                 try:
                     send_report(config, output_dir)
-                    print("✉️  Email report sent")
+                    print("Email report sent")
                 except Exception as email_error:
                     logging.getLogger(__name__).error("Email delivery failed: %s", email_error)
-                    print(f"⚠️  Email delivery failed: {email_error}")
+                    print("Email delivery failed: {}".format(email_error))
             exit_code = 0
         else:
-            print(f"\n⚠️  Report not generated correctly. Check logs.")
+            print("\nReport was not generated correctly. Check logs.")
             exit_code = 2
 
     except KeyboardInterrupt:
-        print("\n\n[!] Assessment interrupted by user. State saved for recovery.")
+        print("\nAssessment interrupted. State was preserved for recovery.")
         exit_code = 130
-    except Exception as e:
-        print(f"\n\n[!] FATAL ERROR: {e}")
+    except Exception as exc:
+        print("\nFATAL ERROR: {}".format(exc))
         logging.getLogger(__name__).critical("Execution failed", exc_info=True)
         exit_code = 2
 
-    print(f"\n📋 Log file: {log_file}")
-    print()
+    print("\nLog file: {}\n".format(log_file))
     return exit_code
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

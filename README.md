@@ -1,8 +1,11 @@
 # ESXi Stealth Vulnerability Assessment
 
-This repository contains the restored comprehensive, phased internal
-assessment framework. It supports the original Python 3.6 openSUSE/SLES host
-as well as current Python versions.
+This repository contains a phased internal vulnerability-assessment framework
+for ESXi and surrounding private-network infrastructure. It supports the
+original Python 3.6 openSUSE/SLES assessment host as well as current Python
+versions.
+
+Use only on networks and systems you are authorized to assess.
 
 ## One-command run
 
@@ -10,47 +13,92 @@ as well as current Python versions.
 python3 master_assessment.py
 ```
 
-No target is required. The launcher installs missing Python dependencies,
-installs missing external tools when privileges permit, ignores common
-container/virtual interfaces, discovers private local subnets, identifies live
-hosts, and executes the configured assessment phases.
+No target is required. When configured scope is empty, the launcher detects
+private local networks, discovers live hosts, and executes every enabled phase.
+The default `thorough` profile performs complete TCP coverage, configured UDP
+coverage, safe enumeration of every discovered open service, web-protocol
+probing on every open TCP port, and safe Nuclei scanning across all discovered
+endpoints.
 
-Use only on networks and systems you are authorized to assess.
+Public subnets and Nuclei templates tagged `dos`, `fuzz`, or `intrusive` remain
+excluded by default. Those safeguards are independent of scan completeness
+inside the authorized private scope.
 
 ## Pipeline
 
-0. Framework and Nuclei-template update
+0. Framework and Nuclei-template update when explicitly enabled
 1. Prerequisite installation, validation, and scope initialization
-2. Live-host discovery, TCP service scanning, ESXi classification, and bounded UDP discovery
-3. Focused service enumeration and safe configuration checks
-4. TLS/certificate analysis
-5. HTTP security assessment
-6. Nuclei vulnerability scanning with intrusive/DoS tags excluded
-7. Delta analysis, state checkpointing, archival, and HTML/JSON reports
+2. Live-host discovery, all-port TCP scanning, ESXi classification, and UDP discovery
+3. Every-open-service enumeration and safe configuration checks
+4. TLS/certificate analysis on every detected TLS endpoint
+5. HTTP/HTTPS probing on every open TCP port and contextual web checks
+6. Nuclei scanning across all open endpoints with unsafe template classes excluded
+7. Delta analysis, state checkpointing, archival, and report generation
 
-Docker, CNI, bridge, veth, and similar virtual interfaces are excluded from
-automatic scope by default. Broad private subnets up to `/16` are split into
-smaller sweeps and every long Nmap scan emits periodic progress messages.
+Independent hosts and endpoints are processed through configurable worker pools.
+This shortens total runtime without omitting checks. Per-command timeouts remain
+in place, while the overall pipeline runtime ceiling is disabled by default for
+large full-coverage assessments.
 
-## Useful commands
+## Reports
+
+A successful run writes:
+
+- `output/assessment_report.json` — normalized scanner data plus contextual analysis
+- `output/assessment_report.md` — executive summary, implications, measures, closure criteria, asset inventory, and detailed evidence
+- `output/assessment_report.html` — self-contained HTML overview
+- `output/assessment_state.json` — raw crash-recovery checkpoint
+- `output/history/YYYY-Wxx/` — archived reports
+- `logs/assessment_*.log` — execution and audit logs
+
+The contextual engine is fully local and deterministic. Its hardcoded scenario
+knowledge base maps exact template IDs, names, descriptions, tags, categories,
+and severity to:
+
+- conclusions and practical implications;
+- remediation steps and validation criteria;
+- risk priority and confidence;
+- selected control mappings and references.
+
+Unknown scanner findings receive a conservative generic explanation. The code
+does not invent CVE-specific fixed versions, prerequisites, or vendor facts.
+Scanner evidence and authoritative vendor advisories remain the source of truth.
+
+## Coverage profiles
 
 ```bash
-# Full automatic run (default)
+# Full coverage (default)
 python3 master_assessment.py
 
-# Fast automatic profile
-python3 master_assessment.py --profile quick
+# Explicitly select the full profile
+python3 master_assessment.py --profile thorough
 
-# Use only configured targets/subnets
+# Complete TCP coverage with lighter fingerprinting
+python3 master_assessment.py --profile standard
+
+# Intentionally reduced coverage for troubleshooting only
+python3 master_assessment.py --profile quick
+```
+
+`quick` is the only profile that intentionally limits TCP port coverage and
+finding severities. It must be selected explicitly.
+
+## Other useful commands
+
+```bash
+# Use configured targets/subnets only
 python3 master_assessment.py --no-auto-network
+
+# Force local private-network detection
+python3 master_assessment.py --auto-network
 
 # Verify configuration/tools without scanning or installing
 python3 master_assessment.py --dry-run --no-install
 
-# End-to-end synthetic verification
+# End-to-end synthetic report verification
 python3 master_assessment.py --mock --no-auto-network
 
-# Write all reports and scan artifacts to a chosen directory
+# Write reports and artifacts to a chosen directory
 python3 master_assessment.py --output-dir /var/reports/esxi-assessment
 
 # Resume from a checkpointed phase
@@ -60,56 +108,56 @@ python3 master_assessment.py --phase 4
 python3 run_assessment.py --setup
 ```
 
-Reports are written to `output/assessment_report.json` and
-`output/assessment_report.html`; logs are written to `logs/`. The legacy
-`--output PATH` spelling is retained as an alias for `--output-dir PATH`.
+Configuration is stored in:
 
-Configuration is in `config/assessment.yaml`, `config/scan_profile.yaml`, and
-`config/stealth_profile.yaml`.
+- `config/assessment.yaml` — scope, phases, all-port coverage, safe scanners, and worker counts
+- `config/scan_profile.yaml` — quick, standard, and thorough profiles
+- `config/stealth_profile.yaml` — rates, delays, timeouts, and total runtime policy
 
-## Guided setup and email delivery
+## Full-coverage controls
 
-`--setup` opens a short guided terminal wizard. It asks for the primary target,
-one scan-coverage profile, and optional report delivery, then shows a final
-review before saving. Advanced timing, phase, tool, and stealth settings stay
-behind one explicit option instead of appearing during normal setup.
+The relevant defaults are:
 
-The recommended baseline is designed for this internal ESXi assessment:
-private networks only, public subnet scanning excluded, core discovery and
-security phases enabled, delta reporting enabled, external SSL Labs checks
-disabled, automatic code/tool updates disabled, and email delivery disabled
-until explicitly configured. Existing values are preserved when the wizard is
-run again.
+```yaml
+vm_discovery:
+  max_hosts: 0                  # zero means no host cap
 
-For Gmail, enable 2-Step Verification and create a Google app password. The
-wizard stores that password in `config/.email_credentials` with mode `0600`,
-not in YAML. The configured report sender uses Gmail SMTP with STARTTLS.
+expanded_discovery:
+  tcp_ports: 1-65535
+  max_addresses_per_subnet: 0   # zero means no configured private-subnet size cap
+  udp:
+    top_ports: 65535
 
-For a local delivery path, choose the automated Postfix option. The wizard can
-install, configure, start, and health-check a loopback-only Postfix server and
-automatically generates the local hostname, mail domain, and sender address
-(for example `assessment@example.internal`). The underlying script can also
-queue a test message when invoked manually and supports Debian/
-Ubuntu, RHEL/Fedora, and openSUSE/SLES:
+security_tests:
+  max_ports_per_host: 0         # enumerate every open service
 
-```bash
-scripts/setup_local_mail.sh --check-only
+web:
+  probe_all_open_ports: true
+
+nuclei:
+  severity_filter: critical,high,medium,low,info
+  tags: []                       # do not restrict to selected safe tag families
+  exclude_tags: [dos, fuzz, intrusive, sqli, xss]
 ```
 
-The mail script detects whether systemd is actually running instead of merely
-checking whether `systemctl` is installed. In containers it falls back to the
-service/Postfix command, creates `/etc/aliases` with a root alias, rebuilds the
-alias database, and then verifies the SMTP listener.
+Adjust worker counts under `assessment.performance` to fit the scanner host and
+network. Parallelism changes execution time, not which targets or checks are
+selected.
 
-The quick email path keeps the HTML, JSON, delta, and health/error report scope
-and runs delivery after a successful report generation. Edit the YAML directly
-if a different subject or report scope is required.
+## Email delivery
 
-Advanced boolean settings use direct checkboxes: `[x]` means `True/Enabled`
-and `[ ]` means `False/Disabled`. Numeric, string, list, and mapping settings
-open a typed value prompt with validation appropriate to their current type;
-lists also accept comma-separated input.
+When email delivery is enabled, the JSON, Markdown, and HTML reports can all be
+attached. The message body includes the contextual risk rating, delta summary,
+and report-generation health.
 
-Nmap per-host and process timeouts are intentionally shorter by default:
-`5m` for service/ESXi hosts, `90s` for discovery sweeps, and `300s` for UDP
-and safe NSE scans. They remain editable in the setup wizard.
+For Gmail, enable 2-Step Verification and create an app password. The setup
+wizard stores credentials in `config/.email_credentials` with mode `0600`, not
+in YAML. A local loopback-only Postfix path is also supported through
+`scripts/setup_local_mail.sh`.
+
+## Interpretation limits
+
+Automated scanning cannot prove the absence of vulnerabilities. High-impact
+findings require version/configuration confirmation, and high-assurance reviews
+still require authenticated checks, patch validation, architecture review, and
+manual testing where authorized.

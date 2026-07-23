@@ -8,9 +8,9 @@ auto_network:
   include_virtual_interfaces: false
   allow_public_subnets: false
   detect_esxi: true
-  esxi_detection_timeout_s: 90
+  esxi_detection_timeout_s: 300
   discovery_rate_pps: 2000
-  max_esxi_candidates: 1024
+  max_esxi_candidates: 65535
 vm_discovery:
   method: sweep
   subnets:
@@ -25,7 +25,7 @@ vm_discovery:
   max_hosts: 0
   discovery_probes:
     enabled: true
-    mode: fallback
+    mode: always
     ps_ports: 22,80,443,902,5989
     pa_ports: 80,443
   known_vms:
@@ -41,25 +41,31 @@ vm_discovery:
   - va018
   - va019-ansible
 expanded_discovery:
-  tcp_ports: ''
+  tcp_ports: 1-65535
   esxi_ports: 22,80,443,427,902,5988,5989,8000,8080,9080,9443
   allow_public_subnets: false
-  max_addresses_per_subnet: 65536
+  max_addresses_per_subnet: 0
   max_addresses_per_sweep: 4096
   neighbor_cache: true
   udp:
     enabled: true
-    top_ports: 20
+    top_ports: 65535
     version_intensity: 1
     max_retries: 1
-    timeout: 300
+    timeout: 7200
 security_tests:
   enabled: true
-  max_ports_per_host: 128
-  script_timeout: 45s
-  host_timeout: 5m
-  timeout: 300
+  max_ports_per_host: 0
+  script_timeout: 60s
+  host_timeout: 30m
+  timeout: 3600
   additional_safe_scripts: []
+performance:
+  udp_workers: 4
+  service_workers: 4
+  crypto_workers: 4
+  web_probe_workers: 12
+  web_workers: 6
 phases:
   phase0_update: false
   phase1_init: true
@@ -70,13 +76,13 @@ phases:
   phase6_vulnscan: true
   phase7_delta: true
 scan:
-  ports: top-1000
-  esxi_ports: 80,443,902,5989,8000,8080,9080
-  version_intensity: 2
+  ports: 1-65535
+  esxi_ports: 22,80,443,427,902,5988,5989,8000,8080,9080,9443
+  version_intensity: 5
   max_retries: 1
-  nmap_host_timeout: 5m
-  host_timeout_s: 300
-  esxi_timeout_s: 300
+  nmap_host_timeout: 30m
+  host_timeout_s: 1800
+  esxi_timeout_s: 1800
   progress_interval_s: 15
 stealth:
   network:
@@ -84,6 +90,17 @@ stealth:
 crypto:
   tls_ports:
   - '443'
+  - '465'
+  - '636'
+  - '853'
+  - '993'
+  - '995'
+  - '2376'
+  - '5986'
+  - '6443'
+  - '7443'
+  - '8443'
+  - '9443'
   prefer_testssl: true
   scan_all_hosts: true
 ssl_automation:
@@ -106,22 +123,18 @@ web:
   - /mob
   - /host
   - /
-  verify_ssl: true
+  verify_ssl: false
   scan_all_hosts: true
+  probe_all_open_ports: true
   use_nikto: true
 nuclei:
   enabled: true
   templates_dir: ''
-  severity_filter: critical,high,medium
-  rate_limit: 50
-  concurrency: 10
+  severity_filter: critical,high,medium,low,info
+  rate_limit: 100
+  concurrency: 25
   timeout: 10
-  tags:
-  - cve
-  - misconfig
-  - exposure
-  - default-login
-  - tech
+  tags: []
   exclude_tags:
   - dos
   - fuzz
@@ -156,6 +169,7 @@ email:
   scope:
   - HTML report
   - JSON report
+  - Markdown report
   - Delta summary
   - Errors and health status
   backend: local
