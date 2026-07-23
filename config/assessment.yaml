@@ -118,6 +118,8 @@ web:
   verify_ssl: false
   scan_all_hosts: true
   use_nikto: true
+  nikto_timeout_s: 3600
+  nikto_tuning: ''
   parallel_targets: 4
 nuclei:
   enabled: true
