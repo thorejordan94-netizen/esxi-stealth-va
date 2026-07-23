@@ -1,12 +1,9 @@
 """Contextual finding knowledge base and deterministic remediation engine.
 
-The scanner output remains the source of truth.  This module adds operational
-context without inventing exploitability: it maps known scenarios to explicit
-implications, remediation steps, and verification guidance, and uses a safe
-fallback for unknown scanner findings.
+Scanner output remains the source of truth. This module maps known scenarios to
+operational implications, remediation steps, and verification guidance. Unknown
+findings receive a conservative fallback instead of fabricated conclusions.
 """
-
-from __future__ import annotations
 
 import re
 from typing import Any, Dict, Iterable, List, Optional, Sequence
@@ -16,289 +13,286 @@ SEVERITY_ORDER = {"critical": 5, "high": 4, "medium": 3, "low": 2, "info": 1}
 SEVERITY_WEIGHTS = {"critical": 10, "high": 7, "medium": 4, "low": 2, "info": 0}
 
 
+def _rule(rule_id, keywords, implications, actions, validation,
+          ids=None, tags=None, id_pattern=None, problematic=True):
+    return {
+        "id": rule_id,
+        "ids": ids or [],
+        "keywords": keywords or [],
+        "tags": tags or [],
+        "id_pattern": id_pattern,
+        "implications": implications,
+        "actions": actions,
+        "validation": validation,
+        "problematic": problematic,
+    }
+
+
 KNOWLEDGE_BASE = [
-    {
-        "id": "anonymous-ftp",
-        "ids": ["NMAP-FTP-ANON"],
-        "keywords": ["anonymous ftp", "ftp anonymous"],
-        "implications": [
+    _rule(
+        "anonymous-ftp",
+        ["anonymous ftp", "ftp anonymous"],
+        [
             "Unauthenticated users may read or upload files, depending on server permissions.",
             "Writable anonymous areas can be abused for malware staging, data exchange, or storage exhaustion.",
         ],
-        "actions": [
-            "Disable anonymous authentication unless it is an explicitly approved business requirement.",
-            "Restrict the FTP service to required source networks and prefer SFTP or another authenticated protocol.",
-            "Review the anonymous root for sensitive or attacker-supplied files and remove unnecessary write permissions.",
+        [
+            "Disable anonymous authentication unless it is an explicitly approved requirement.",
+            "Restrict FTP to required source networks and prefer SFTP or another authenticated protocol.",
+            "Review the anonymous root for sensitive or attacker-supplied files and remove write access.",
         ],
-        "validation": ["Reconnect without credentials and confirm that listing, download, and upload are rejected."],
-        "problematic": True,
-    },
-    {
-        "id": "smbv1",
-        "ids": ["NMAP-SMB1"],
-        "keywords": ["smbv1", "smb1", "nt lm 0.12"],
-        "implications": [
+        ["Reconnect without credentials and confirm listing, download, and upload are rejected."],
+        ids=["NMAP-FTP-ANON"], tags=["ftp", "misconfig"],
+    ),
+    _rule(
+        "smbv1",
+        ["smbv1", "smb1", "nt lm 0.12"],
+        [
             "SMBv1 is obsolete and lacks modern protocol protections.",
-            "Its presence materially increases lateral-movement and ransomware risk on internal networks.",
+            "Its presence materially increases lateral-movement and ransomware risk.",
         ],
-        "actions": [
-            "Disable SMBv1 on the server and all dependent clients.",
-            "Identify and upgrade legacy systems before enforcing SMBv2/SMBv3 only.",
-            "Segment systems that cannot be upgraded and block SMB access from unrelated network zones.",
+        [
+            "Disable SMBv1 on servers and dependent clients.",
+            "Upgrade legacy systems before enforcing SMBv2/SMBv3 only.",
+            "Segment systems that cannot be upgraded and restrict TCP/445 paths.",
         ],
-        "validation": ["Repeat protocol enumeration and verify that only SMBv2/SMBv3 dialects are offered."],
-        "problematic": True,
-    },
-    {
-        "id": "smb-signing",
-        "ids": ["NMAP-SMB-SIGNING"],
-        "keywords": ["smb signing", "signing not required", "signing disabled"],
-        "implications": [
+        ["Repeat protocol enumeration and verify that only SMBv2/SMBv3 dialects are offered."],
+        ids=["NMAP-SMB1"], tags=["smb", "legacy"],
+    ),
+    _rule(
+        "smb-signing",
+        ["smb signing", "signing not required", "signing disabled"],
+        [
             "Unsigned SMB sessions are more exposed to relay and man-in-the-middle attacks.",
             "Internal credential material may be abused when an attacker can influence network traffic.",
         ],
-        "actions": [
+        [
             "Require SMB signing on servers and clients through policy.",
-            "Reduce NTLM usage and prefer Kerberos where the environment supports it.",
-            "Restrict TCP/445 between network segments to required communication paths only.",
+            "Reduce NTLM usage and prefer Kerberos where supported.",
+            "Restrict TCP/445 between network segments to required paths only.",
         ],
-        "validation": ["Re-run SMB security-mode checks and confirm that message signing is required."],
-        "problematic": True,
-    },
-    {
-        "id": "dangerous-http-methods",
-        "ids": ["NMAP-HTTP-METHODS"],
-        "keywords": ["dangerous http methods", "http methods", "trace method", "put method", "delete method"],
-        "implications": [
-            "Unnecessary HTTP methods can enable content modification, information disclosure, or proxy abuse.",
-            "The actual impact depends on authentication, path permissions, and application routing.",
+        ["Re-run SMB security-mode checks and confirm message signing is required."],
+        ids=["NMAP-SMB-SIGNING"], tags=["smb", "misconfig"],
+    ),
+    _rule(
+        "dangerous-http-methods",
+        ["dangerous http methods", "http methods", "trace method", "put method", "delete method"],
+        [
+            "Unnecessary HTTP methods can enable content modification, disclosure, or proxy abuse.",
+            "Actual impact depends on authentication, path permissions, and application routing.",
         ],
-        "actions": [
-            "Allow only the HTTP methods required by the application at the reverse proxy and application server.",
-            "Disable TRACE and restrict PUT, DELETE, and CONNECT unless explicitly required and authenticated.",
-            "Test method handling on every affected path because server-wide and application-level policies may differ.",
+        [
+            "Allow only methods required by the application at the proxy and application server.",
+            "Disable TRACE and restrict PUT, DELETE, and CONNECT unless explicitly required.",
+            "Test method handling on every affected path.",
         ],
-        "validation": ["Send unauthenticated OPTIONS and direct method requests and confirm disallowed methods return 405 or 403."],
-        "problematic": True,
-    },
-    {
-        "id": "weak-ssh",
-        "ids": ["NMAP-SSH-WEAK-ALGO"],
-        "keywords": ["weak ssh", "ssh-dss", "group1-sha1", "3des-cbc", "arcfour", "hmac-md5"],
-        "implications": [
+        ["Confirm disallowed methods return 405 or 403 without authentication."],
+        ids=["NMAP-HTTP-METHODS"], tags=["http", "misconfig"],
+    ),
+    _rule(
+        "weak-ssh",
+        ["weak ssh", "ssh-dss", "group1-sha1", "3des-cbc", "arcfour", "hmac-md5"],
+        [
             "Legacy SSH algorithms reduce cryptographic assurance and may violate security baselines.",
-            "Downgrade-compatible clients can continue using weak primitives even when stronger options are present.",
+            "Compatible clients may continue negotiating weak primitives while they remain enabled.",
         ],
-        "actions": [
-            "Remove weak key-exchange, cipher, host-key, and MAC algorithms from the SSH server configuration.",
+        [
+            "Remove weak key-exchange, cipher, host-key, and MAC algorithms.",
             "Upgrade incompatible clients and rotate legacy host keys where required.",
-            "Use a centrally managed SSH cryptographic policy and monitor for configuration drift.",
+            "Manage the SSH cryptographic policy centrally and monitor drift.",
         ],
-        "validation": ["Repeat SSH algorithm enumeration and confirm that no prohibited algorithms are advertised."],
-        "problematic": True,
-    },
-    {
-        "id": "rdp-nla",
-        "ids": ["NMAP-RDP-NLA"],
-        "keywords": ["rdp nla", "network level authentication", "credssp"],
-        "implications": [
-            "Without NLA, the RDP service performs more work before authentication and exposes a broader pre-authentication surface.",
-            "The endpoint is more susceptible to credential attacks and resource-exhaustion attempts.",
+        ["Repeat algorithm enumeration and confirm prohibited algorithms are absent."],
+        ids=["NMAP-SSH-WEAK-ALGO"], tags=["ssh", "crypto"],
+    ),
+    _rule(
+        "rdp-nla",
+        ["rdp nla", "network level authentication", "credssp"],
+        [
+            "Without NLA, RDP exposes a broader pre-authentication surface.",
+            "The endpoint is more susceptible to credential attacks and resource exhaustion.",
         ],
-        "actions": [
+        [
             "Require Network Level Authentication and current CredSSP settings.",
-            "Restrict RDP to approved administration networks or a hardened access gateway.",
-            "Enforce MFA and account lockout controls for administrative access.",
+            "Restrict RDP to approved administration networks or a hardened gateway.",
+            "Enforce MFA and account lockout controls.",
         ],
-        "validation": ["Reconnect with a client that does not support NLA and confirm the session is rejected before desktop negotiation."],
-        "problematic": True,
-    },
-    {
-        "id": "dns-recursion",
-        "ids": ["NMAP-DNS-RECURSION"],
-        "keywords": ["dns recursion", "recursion enabled"],
-        "implications": [
-            "Unrestricted recursion can disclose internal DNS behavior and enable amplification or abuse from reachable networks.",
-            "Risk is lower when recursion is deliberately limited to trusted resolvers and clients.",
+        ["Confirm a client without NLA support is rejected before desktop negotiation."],
+        ids=["NMAP-RDP-NLA"], tags=["rdp", "misconfig"],
+    ),
+    _rule(
+        "dns-recursion",
+        ["dns recursion", "recursion enabled"],
+        [
+            "Unrestricted recursion can disclose DNS behavior and enable amplification abuse.",
+            "Risk is lower when recursion is deliberately limited to trusted clients.",
         ],
-        "actions": [
+        [
             "Limit recursive queries to approved internal client networks.",
             "Disable recursion on authoritative-only servers.",
-            "Apply response-rate limiting and block external access to UDP/TCP 53 where it is not required.",
+            "Block external UDP/TCP 53 access where it is not required.",
         ],
-        "validation": ["Query an unrelated external domain from an untrusted test segment and confirm recursion is refused."],
-        "problematic": True,
-    },
-    {
-        "id": "unauthenticated-datastore",
-        "ids": ["NMAP-REDIS-INFO", "NMAP-MEMCACHED-INFO"],
-        "keywords": ["unauthenticated redis", "unauthenticated memcached", "redis information", "memcached information"],
-        "implications": [
-            "A reachable datastore without effective authentication can expose cached data, application state, or administrative functions.",
-            "Depending on configuration, an attacker may alter data, trigger denial of service, or pivot to dependent applications.",
+        ["Query an unrelated domain from an untrusted segment and confirm recursion is refused."],
+        ids=["NMAP-DNS-RECURSION"], tags=["dns", "exposure"],
+    ),
+    _rule(
+        "unauthenticated-datastore",
+        ["unauthenticated redis", "unauthenticated memcached", "redis information", "memcached information"],
+        [
+            "A reachable datastore without effective authentication can expose data or administrative functions.",
+            "Depending on configuration, an attacker may alter data, cause denial of service, or pivot.",
         ],
-        "actions": [
-            "Bind the service to required interfaces only and restrict access with host and network firewalls.",
+        [
+            "Bind the service to required interfaces and restrict it with host and network firewalls.",
             "Enable supported authentication and transport protection.",
-            "Review stored data and dependent credentials for exposure after access has been restricted.",
+            "Review stored data and dependent credentials after access is restricted.",
         ],
-        "validation": ["Connect from an unauthorized segment and confirm the service is unreachable or requires authentication."],
-        "problematic": True,
-    },
-    {
-        "id": "snmp-exposure",
-        "ids": ["NMAP-SNMP-INFO"],
-        "keywords": ["snmp service information", "snmp-info", "public community"],
-        "implications": [
-            "SNMP can expose detailed device, software, interface, and network information useful for reconnaissance.",
-            "SNMPv1/v2c community strings provide weak access control and no transport confidentiality.",
+        ["Confirm unauthorized segments cannot connect or must authenticate."],
+        ids=["NMAP-REDIS-INFO", "NMAP-MEMCACHED-INFO"], tags=["redis", "memcached", "exposure"],
+    ),
+    _rule(
+        "snmp-exposure",
+        ["snmp service information", "snmp-info", "public community"],
+        [
+            "SNMP can disclose detailed device, software, interface, and network information.",
+            "SNMPv1/v2c community strings provide weak access control and no confidentiality.",
         ],
-        "actions": [
+        [
             "Use SNMPv3 with authentication and privacy where monitoring is required.",
-            "Restrict manager source addresses and remove default or shared community strings.",
-            "Disable SNMP on systems that are not actively monitored.",
+            "Restrict manager source addresses and remove default community strings.",
+            "Disable SNMP where it is not actively used.",
         ],
-        "validation": ["Verify that unauthorized sources receive no response and that approved monitoring uses SNMPv3."],
-        "problematic": True,
-    },
-    {
-        "id": "legacy-tls",
-        "keywords": ["tls 1.0", "tls1.0", "tls 1.1", "tls1.1", "sslv2", "sslv3", "legacy tls"],
-        "tags": ["tls", "ssl", "crypto"],
-        "implications": [
-            "Legacy TLS/SSL protocols use obsolete constructions and commonly fail current compliance baselines.",
-            "Clients may negotiate weaker protection than intended when old protocol versions remain enabled.",
+        ["Verify unauthorized sources receive no response and approved monitoring uses SNMPv3."],
+        ids=["NMAP-SNMP-INFO"], tags=["snmp", "exposure"],
+    ),
+    _rule(
+        "legacy-tls",
+        ["tls 1.0", "tls1.0", "tls 1.1", "tls1.1", "sslv2", "sslv3", "legacy tls", "deprecated tls"],
+        [
+            "Legacy TLS/SSL protocols use obsolete constructions and commonly fail security baselines.",
+            "Clients may negotiate weaker protection while old versions remain enabled.",
         ],
-        "actions": [
-            "Disable SSLv2, SSLv3, TLS 1.0, and TLS 1.1 unless a documented exception exists.",
+        [
+            "Disable SSLv2, SSLv3, TLS 1.0, and TLS 1.1 unless an approved exception exists.",
             "Require TLS 1.2 or TLS 1.3 with an approved cipher policy.",
-            "Identify and upgrade dependent legacy clients before enforcement.",
+            "Upgrade dependent legacy clients before enforcement.",
         ],
-        "validation": ["Repeat protocol negotiation tests and confirm only approved TLS versions succeed."],
-        "problematic": True,
-    },
-    {
-        "id": "certificate-trust",
-        "keywords": ["self-signed", "self signed", "untrusted certificate", "unknown ca", "certificate trust"],
-        "tags": ["certificate", "tls", "ssl"],
-        "implications": [
-            "Clients cannot reliably authenticate the service when certificate trust is not centrally established.",
+        ["Repeat negotiation tests and confirm only approved TLS versions succeed."],
+        tags=["tls", "ssl", "crypto"],
+    ),
+    _rule(
+        "certificate-trust",
+        ["self-signed", "self signed", "untrusted certificate", "unknown ca", "certificate trust"],
+        [
+            "Clients cannot reliably authenticate the service when certificate trust is not established.",
             "Users may become conditioned to ignore warnings, increasing man-in-the-middle risk.",
         ],
-        "actions": [
-            "Issue the service certificate from the approved internal or public CA.",
-            "Install the complete certificate chain and remove obsolete certificates.",
-            "Automate certificate renewal and monitor expiry and hostname coverage.",
+        [
+            "Issue the certificate from the approved internal or public CA.",
+            "Install the complete chain and remove obsolete certificates.",
+            "Automate renewal and monitor expiry and hostname coverage.",
         ],
-        "validation": ["Validate the chain, hostname, and expiry from a standard managed client without suppressing trust checks."],
-        "problematic": True,
-    },
-    {
-        "id": "certificate-expiry",
-        "keywords": ["expired certificate", "certificate expired", "expires soon", "certificate expiry"],
-        "tags": ["certificate", "tls", "ssl"],
-        "implications": [
-            "Expired or near-expiry certificates can cause service disruption and train users to bypass security warnings.",
-            "Renewal failures often indicate missing ownership or ineffective certificate lifecycle controls.",
+        ["Validate chain, hostname, and expiry from a managed client without suppressing checks."],
+        tags=["certificate", "tls", "ssl"],
+    ),
+    _rule(
+        "certificate-expiry",
+        ["expired certificate", "certificate expired", "expires soon", "certificate expiry"],
+        [
+            "Expired or near-expiry certificates can cause service disruption and warning bypass.",
+            "Renewal failures indicate missing ownership or ineffective lifecycle controls.",
         ],
-        "actions": [
-            "Renew and deploy the certificate with the correct chain and subject alternative names.",
-            "Assign certificate ownership and configure automated renewal with alerting before expiry.",
-            "Remove unused certificates and verify all clustered nodes receive the replacement.",
+        [
+            "Renew and deploy the certificate with the correct chain and SAN entries.",
+            "Assign ownership and configure automated renewal with early alerting.",
+            "Verify all clustered nodes receive the replacement.",
         ],
-        "validation": ["Confirm the new validity period and chain from every served endpoint."],
-        "problematic": True,
-    },
-    {
-        "id": "weak-cipher",
-        "keywords": ["weak cipher", "rc4", "3des", "des-cbc", "null cipher", "export cipher", "sweet32"],
-        "tags": ["tls", "ssl", "crypto"],
-        "implications": [
-            "Weak cipher suites reduce confidentiality or integrity and may permit known cryptographic attacks.",
-            "Their availability can also create audit and regulatory findings even when modern ciphers are preferred.",
+        ["Confirm the new validity period and chain from every served endpoint."],
+        tags=["certificate", "tls", "ssl"],
+    ),
+    _rule(
+        "weak-cipher",
+        ["weak cipher", "rc4", "3des", "des-cbc", "null cipher", "export cipher", "sweet32"],
+        [
+            "Weak cipher suites reduce confidentiality or integrity and may permit known attacks.",
+            "Their availability can create audit findings even when modern ciphers are preferred.",
         ],
-        "actions": [
+        [
             "Remove NULL, export, RC4, DES, 3DES, and other prohibited suites.",
-            "Prefer modern AEAD suites and server-side cryptographic policy management.",
-            "Retest all supported clients after tightening the cipher configuration.",
+            "Prefer modern AEAD suites and centrally managed cryptographic policy.",
+            "Retest supported clients after tightening configuration.",
         ],
-        "validation": ["Enumerate accepted cipher suites and confirm only the approved baseline remains."],
-        "problematic": True,
-    },
-    {
-        "id": "missing-security-header",
-        "keywords": ["missing security header", "strict-transport-security", "content-security-policy", "x-frame-options", "x-content-type-options", "hsts"],
-        "tags": ["headers", "http", "misconfig"],
-        "implications": [
-            "Missing browser security headers weaken defense in depth against downgrade, framing, content-type confusion, and script injection.",
-            "Impact depends on whether the application handles sensitive data and on its existing frontend controls.",
+        ["Enumerate accepted suites and confirm only the approved baseline remains."],
+        tags=["tls", "ssl", "crypto"],
+    ),
+    _rule(
+        "missing-security-header",
+        ["missing security header", "strict-transport-security", "content-security-policy", "x-frame-options", "x-content-type-options", "hsts"],
+        [
+            "Missing browser security headers weaken defense in depth against common client-side attacks.",
+            "Impact depends on application sensitivity and existing frontend controls.",
         ],
-        "actions": [
-            "Define and deploy an application-appropriate security-header baseline at the reverse proxy or application layer.",
-            "Use HSTS only after confirming HTTPS is consistently available for the affected hostname.",
-            "Test CSP in report-only mode before enforcement to avoid breaking required application behavior.",
+        [
+            "Deploy an application-appropriate security-header baseline.",
+            "Enable HSTS only after confirming HTTPS is consistently available.",
+            "Test CSP in report-only mode before enforcement.",
         ],
-        "validation": ["Inspect responses for all relevant paths and confirm the required headers and directives are present."],
-        "problematic": True,
-    },
-    {
-        "id": "default-credentials",
-        "keywords": ["default login", "default credential", "default password", "factory credential"],
-        "tags": ["default-login", "credentials"],
-        "implications": [
+        ["Inspect all relevant paths and confirm required headers and directives are present."],
+        tags=["headers", "http", "misconfig"],
+    ),
+    _rule(
+        "default-credentials",
+        ["default login", "default credential", "default password", "factory credential"],
+        [
             "Default or predictable credentials can provide immediate unauthorized access.",
-            "Administrative interfaces with default credentials may enable full system compromise.",
+            "Administrative interfaces may enable complete system compromise.",
         ],
-        "actions": [
+        [
             "Change or disable all default accounts and rotate associated credentials immediately.",
             "Restrict the management interface to approved administration networks.",
-            "Review authentication logs and system changes for evidence of prior unauthorized access.",
+            "Review authentication logs and system changes for prior unauthorized access.",
         ],
-        "validation": ["Confirm all vendor-default credential combinations fail and approved accounts require the intended controls."],
-        "problematic": True,
-    },
-    {
-        "id": "known-cve",
-        "id_pattern": r"^CVE-\d{4}-\d+$",
-        "keywords": ["known vulnerability", "cve-"],
-        "tags": ["cve"],
-        "implications": [
+        ["Confirm vendor-default credential combinations fail."],
+        tags=["default-login", "credentials"],
+    ),
+    _rule(
+        "known-cve",
+        ["known vulnerability", "cve-"],
+        [
             "The scanner matched a condition associated with a published vulnerability.",
-            "Actual exploitability depends on the detected product version, configuration, reachability, and template accuracy.",
+            "Exploitability depends on product version, configuration, reachability, and template accuracy.",
         ],
-        "actions": [
-            "Validate the affected product and version against the vendor advisory and the scanner evidence.",
+        [
+            "Validate the product and version against the vendor advisory and scanner evidence.",
             "Apply the vendor patch or documented mitigation according to severity and exposure.",
-            "Restrict network access until remediation is complete and check logs for indicators relevant to the advisory.",
+            "Restrict access until remediation is complete and review relevant logs.",
         ],
-        "validation": ["Re-run the specific scanner template and verify the vendor-fixed version or mitigation is present."],
-        "problematic": True,
-    },
-    {
-        "id": "information-exposure",
-        "keywords": ["information disclosure", "version disclosure", "exposed", "banner", "debug", "stack trace", "directory listing"],
-        "tags": ["exposure", "tech"],
-        "implications": [
-            "Exposed technical details improve attacker reconnaissance and can reveal sensitive paths, versions, or configuration data.",
-            "The finding may be low severity by itself but can materially assist exploitation of other weaknesses.",
+        ["Re-run the specific template and verify the fixed version or mitigation is present."],
+        tags=["cve"], id_pattern=r"^CVE-\d{4}-\d+$",
+    ),
+    _rule(
+        "information-exposure",
+        ["information disclosure", "version disclosure", "exposed", "banner", "debug", "stack trace", "directory listing"],
+        [
+            "Exposed technical details improve reconnaissance and can reveal sensitive paths or versions.",
+            "The issue may be low severity alone but can materially assist exploitation of other weaknesses.",
         ],
-        "actions": [
-            "Remove unnecessary banners, debug output, directory listings, and sensitive unauthenticated endpoints.",
+        [
+            "Remove unnecessary banners, debug output, directory listings, and unauthenticated diagnostics.",
             "Restrict administrative and diagnostic interfaces to approved networks.",
-            "Review the exposed data for secrets, internal addresses, usernames, and vulnerable component versions.",
+            "Review exposed data for secrets, internal addresses, usernames, and vulnerable versions.",
         ],
-        "validation": ["Repeat the unauthenticated request and confirm sensitive details are no longer returned."],
-        "problematic": True,
-    },
+        ["Repeat the unauthenticated request and confirm sensitive details are no longer returned."],
+        tags=["exposure", "tech"],
+    ),
 ]
 
 
-def normalize_severity(value: Any) -> str:
+def normalize_severity(value):
     severity = str(value or "info").strip().lower()
     return severity if severity in SEVERITY_ORDER else "info"
 
 
-def priority_for_severity(severity: str) -> str:
+def priority_for_severity(severity):
     return {
         "critical": "P0 - immediate",
         "high": "P1 - urgent",
@@ -308,7 +302,7 @@ def priority_for_severity(severity: str) -> str:
     }[normalize_severity(severity)]
 
 
-def _text_blob(finding: Dict[str, Any]) -> str:
+def _text_blob(finding):
     values = [
         finding.get("id", ""), finding.get("title", ""), finding.get("description", ""),
         finding.get("evidence", ""), finding.get("category", ""), finding.get("scanner", ""),
@@ -317,9 +311,8 @@ def _text_blob(finding: Dict[str, Any]) -> str:
     return " ".join(str(value or "") for value in values).lower()
 
 
-def _rule_score(rule: Dict[str, Any], finding: Dict[str, Any]) -> int:
+def _rule_score(rule, finding):
     finding_id = str(finding.get("id", ""))
-    lowered_id = finding_id.lower()
     tags = {str(value).lower() for value in finding.get("tags", []) or []}
     blob = _text_blob(finding)
     score = 0
@@ -333,12 +326,10 @@ def _rule_score(rule: Dict[str, Any], finding: Dict[str, Any]) -> int:
             score += 10
     overlap = tags.intersection(str(value).lower() for value in rule.get("tags", []))
     score += len(overlap) * 3
-    if lowered_id and lowered_id == str(rule.get("id", "")).lower():
-        score += 80
     return score
 
 
-def match_rule(finding: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def match_rule(finding):
     best = None
     best_score = 0
     for rule in KNOWLEDGE_BASE:
@@ -349,34 +340,33 @@ def match_rule(finding: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return best if best_score >= 3 else None
 
 
-def _generic_context(finding: Dict[str, Any]) -> Dict[str, Any]:
+def _generic_context(finding):
     severity = normalize_severity(finding.get("severity"))
     title = finding.get("title") or finding.get("id") or "Scanner finding"
     implications = [
         "The scanner detected a condition that requires validation in the context of this asset and service.",
-        "Risk depends on reachability, authentication, affected version, exposed data, and the reliability of the scanner evidence.",
-    ]
-    actions = [
-        "Validate the observation manually or with a second independent check.",
-        "Identify the owning system, affected component, business function, and exposure path.",
-        "Apply the vendor-recommended fix or remove unnecessary exposure, then repeat the original test.",
+        "Risk depends on reachability, authentication, version, exposed data, and scanner evidence quality.",
     ]
     if severity == "info":
-        implications[0] = "The observation is primarily contextual and does not by itself prove a security vulnerability."
+        implications[0] = "The observation is contextual and does not by itself prove a vulnerability."
     return {
         "knowledge_rule": "generic-validated-fallback",
         "risk_statement": "{} was reported on {}. Treat it as {} until validated.".format(
             title, finding.get("target", "unknown target"), priority_for_severity(severity)
         ),
         "implications": implications,
-        "recommended_actions": actions,
+        "recommended_actions": [
+            "Validate the observation manually or with a second independent check.",
+            "Identify the owning system, affected component, business function, and exposure path.",
+            "Apply the vendor-recommended fix or remove unnecessary exposure, then repeat the original test.",
+        ],
         "validation_steps": ["Repeat the exact check and confirm the result after remediation."],
         "problematic": severity != "info",
         "confidence": "scanner-dependent",
     }
 
 
-def contextualize_finding(finding: Dict[str, Any]) -> Dict[str, Any]:
+def contextualize_finding(finding):
     result = dict(finding)
     severity = normalize_severity(result.get("severity"))
     result["severity"] = severity
@@ -385,7 +375,6 @@ def contextualize_finding(finding: Dict[str, Any]) -> Dict[str, Any]:
     if rule is None:
         result["context"] = _generic_context(result)
         return result
-
     title = result.get("title") or result.get("id") or "Finding"
     result["context"] = {
         "knowledge_rule": rule["id"],
@@ -401,7 +390,7 @@ def contextualize_finding(finding: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-def contextualize_all(findings: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def contextualize_all(findings):
     contextual = [contextualize_finding(item) for item in findings]
     return sorted(
         contextual,
@@ -413,13 +402,13 @@ def contextualize_all(findings: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]
     )
 
 
-def risk_score(findings: Iterable[Dict[str, Any]]) -> int:
+def risk_score(findings):
     """Return a bounded 0-100 operational risk indicator, not a CVSS score."""
     total = sum(SEVERITY_WEIGHTS.get(normalize_severity(item.get("severity")), 0) for item in findings)
     return min(100, total)
 
 
-def overall_risk(score: int, findings: Sequence[Dict[str, Any]]) -> str:
+def overall_risk(score, findings):
     severities = {normalize_severity(item.get("severity")) for item in findings}
     if "critical" in severities or score >= 60:
         return "critical"
@@ -432,7 +421,7 @@ def overall_risk(score: int, findings: Sequence[Dict[str, Any]]) -> str:
     return "informational"
 
 
-def prioritized_actions(findings: Sequence[Dict[str, Any]], limit: int = 12) -> List[Dict[str, Any]]:
+def prioritized_actions(findings, limit=12):
     seen = set()
     actions = []
     for finding in findings:
