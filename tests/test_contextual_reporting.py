@@ -3,12 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from orchestrator.finding_knowledge import (
-    build_contextual_analysis,
-    build_enriched_report,
-    contextualize_finding,
-    write_enriched_json,
-)
+from orchestrator.finding_knowledge import build_contextual_analysis, contextualize_finding
 from orchestrator.models import (
     AssessmentMetadata,
     AssessmentReport,
@@ -18,7 +13,9 @@ from orchestrator.models import (
     WebAssessmentResult,
     WebVulnerability,
 )
+from orchestrator.report_json import build_enriched_report, write_enriched_json
 from orchestrator.report_markdown import generate_report
+from orchestrator.reporting_policy import calculate_risk_score, risk_rating
 
 
 class ContextualKnowledgeTests(unittest.TestCase):
@@ -60,6 +57,12 @@ class ContextualKnowledgeTests(unittest.TestCase):
         self.assertEqual("generic-medium", result["context"]["knowledge_rule"])
         self.assertEqual("low", result["context"]["confidence"])
         self.assertIn("Validate", result["context"]["validation"][0])
+
+    def test_highest_finding_sets_minimum_environment_rating(self):
+        high_score = calculate_risk_score([{"severity": "High"}])
+        critical_score = calculate_risk_score([{"severity": "Critical"}])
+        self.assertEqual("High", risk_rating(high_score))
+        self.assertEqual("Critical", risk_rating(critical_score))
 
 
 class ContextualReportTests(unittest.TestCase):
@@ -114,12 +117,13 @@ class ContextualReportTests(unittest.TestCase):
         self.assertGreaterEqual(analysis["severity_distribution"]["High"], 2)
         self.assertTrue(analysis["priority_actions"])
 
-    def test_enriched_json_preserves_raw_sections(self):
+    def test_enriched_json_preserves_raw_sections_and_high_rating(self):
         payload = build_enriched_report(self._report())
         self.assertIn("findings_infrastructure", payload)
         self.assertIn("findings_vulns", payload)
         self.assertIn("contextual_analysis", payload)
         self.assertEqual("2.2-contextual", payload["schema_version"])
+        self.assertEqual("High", payload["contextual_analysis"]["risk_rating"])
 
     def test_json_and_markdown_are_written(self):
         report = self._report()
@@ -132,7 +136,9 @@ class ContextualReportTests(unittest.TestCase):
             data = json.loads(json_path.read_text(encoding="utf-8"))
             markdown = md_path.read_text(encoding="utf-8")
             self.assertIn("contextual_analysis", data)
+            self.assertEqual("High", data["contextual_analysis"]["risk_rating"])
             self.assertIn("# ESXi Vulnerability Assessment Report", markdown)
+            self.assertIn("**Risk rating:** High", markdown)
             self.assertIn("## Priority Action Plan", markdown)
             self.assertIn("**Implications**", markdown)
             self.assertIn("**Recommended measures**", markdown)
