@@ -22,7 +22,6 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any
 
-# Ensure project root is in PYTHONPATH
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -58,10 +57,8 @@ PHASE_TOGGLE_NAMES = {
 def setup_logging(log_dir: Path):
     """Configure dual logging: file + console."""
     log_dir.mkdir(parents=True, exist_ok=True)
-
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_file = log_dir / "assessment_{}.log".format(timestamp)
-
     formatter = logging.Formatter(
         "%(asctime)s | %(levelname)-8s | %(name)-25s | %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
@@ -69,17 +66,14 @@ def setup_logging(log_dir: Path):
 
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)
-
     fh = logging.FileHandler(log_file, encoding="utf-8")
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(formatter)
     root.addHandler(fh)
-
     ch = logging.StreamHandler(sys.stdout)
     ch.setLevel(logging.INFO)
     ch.setFormatter(formatter)
     root.addHandler(ch)
-
     logger.info("Logging initialized: %s", log_file)
     return log_file
 
@@ -93,10 +87,8 @@ def load_config(config_dir: Path) -> Dict[str, Any]:
         if not path.exists():
             logger.error("Config file not found: %s", path)
             sys.exit(1)
-
         with open(path, "r", encoding="utf-8") as handle:
             data = yaml.safe_load(handle) or {}
-
         if config_file == "assessment.yaml":
             config["assessment"] = data
         elif config_file == "stealth_profile.yaml":
@@ -140,7 +132,6 @@ def apply_scan_profile(config: Dict[str, Any]) -> Dict[str, Any]:
         network_cfg["scan_delay_ms"] = profile["scan_delay_ms"]
     if profile.get("http_request_delay_s") is not None:
         http_cfg["request_delay_s"] = profile["http_request_delay_s"]
-
     if "skip_nikto" in profile:
         web_cfg["use_nikto"] = web_cfg.get("use_nikto", True) and not profile["skip_nikto"]
     if "skip_ssllabs" in profile:
@@ -168,19 +159,10 @@ def determine_default_start_phase(config: Dict[str, Any]) -> int:
 
 
 def _generate_final_reports(report: AssessmentReport, output_dir: Path):
-    """Write all final report formats while preserving raw phase state."""
+    """Write all final report formats, recording partial reporting failures."""
     final_json = output_dir / "assessment_report.json"
     markdown_path = output_dir / "assessment_report.md"
     html_path = output_dir / "assessment_report.html"
-
-    try:
-        from orchestrator.finding_knowledge import write_enriched_json
-        write_enriched_json(report, str(final_json))
-        logger.info("Enriched JSON report generated: %s", final_json)
-    except Exception as exc:
-        logger.error("Failed to generate enriched JSON report: %s", exc, exc_info=True)
-        # A normalized report is preferable to no JSON deliverable.
-        report.flush_to_disk(str(final_json))
 
     try:
         from orchestrator.report_markdown import generate_report as generate_markdown
@@ -196,6 +178,15 @@ def _generate_final_reports(report: AssessmentReport, output_dir: Path):
     except Exception as exc:
         logger.error("Failed to generate HTML report: %s", exc, exc_info=True)
         report.add_error("reporting", "html", "HTML report generation failed: {}".format(exc))
+
+    try:
+        from orchestrator.report_json import write_enriched_json
+        write_enriched_json(report, str(final_json))
+        logger.info("Enriched JSON report generated: %s", final_json)
+    except Exception as exc:
+        logger.error("Failed to generate enriched JSON report: %s", exc, exc_info=True)
+        report.add_error("reporting", "json", "Enriched JSON generation failed: {}".format(exc))
+        report.flush_to_disk(str(final_json))
 
 
 def run_pipeline(config: Dict[str, Any], start_phase: int = 1,
@@ -241,8 +232,6 @@ def run_pipeline(config: Dict[str, Any], start_phase: int = 1,
         Phase7Delta(stealth_cfg),
     ]
 
-    # A value of zero disables the overall runtime ceiling. Per-command and
-    # per-host timeouts still prevent an individual external process from hanging.
     max_runtime = int(stealth_cfg.get("general", {}).get("max_runtime_s", 0) or 0)
     pipeline_start = time.time()
 
@@ -279,7 +268,6 @@ def run_pipeline(config: Dict[str, Any], start_phase: int = 1,
                 "phase{}_{}".format(phase.phase_number, phase.name.lower()),
                 "orchestrator", "Unrecoverable crash: {}".format(exc),
             )
-
         report.flush_to_disk(str(state_file))
         logger.debug("State checkpoint saved to %s", state_file)
 
@@ -287,7 +275,12 @@ def run_pipeline(config: Dict[str, Any], start_phase: int = 1,
         report.set_finished()
         report.flush_to_disk(str(state_file))
         _generate_final_reports(report, output_dir)
-        # Persist reporting errors, if any, after report generation.
+        try:
+            from orchestrator.report_archive import archive_final_reports
+            archive_final_reports(report, config, output_dir)
+        except Exception as exc:
+            logger.error("Failed to archive final reports: %s", exc, exc_info=True)
+            report.add_error("reporting", "archive", "Final report archive failed: {}".format(exc))
         report.flush_to_disk(str(state_file))
 
     total_time = time.time() - pipeline_start
