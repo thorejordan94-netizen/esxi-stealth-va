@@ -41,7 +41,7 @@ vm_discovery:
   - va018
   - va019-ansible
 expanded_discovery:
-  tcp_ports: 1-65535
+  tcp_ports: ''
   esxi_ports: 22,80,443,427,902,5988,5989,8000,8080,9080,9443
   allow_public_subnets: false
   max_addresses_per_subnet: 0
@@ -49,7 +49,7 @@ expanded_discovery:
   neighbor_cache: true
   udp:
     enabled: true
-    ports: 1-65535
+    ports: top-20
     version_intensity: 2
     max_retries: 1
     max_rate_pps: 2000
