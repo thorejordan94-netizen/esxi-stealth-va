@@ -1,7 +1,7 @@
-active_profile: quick
+active_profile: comprehensive
 profiles:
   quick:
-    description: ''
+    description: Fast triage using the most common ports and highest-severity templates.
     ports: top-100
     version_intensity: 1
     nuclei_rate: 100
@@ -25,7 +25,7 @@ profiles:
     scan_delay_ms: 50
     http_request_delay_s: 2.0
   thorough:
-    description: Exhaustive scan covering all TCP ports. Very slow, very noisy.
+    description: Exhaustive TCP coverage with conservative timing.
     ports: 1-65535
     version_intensity: 5
     nuclei_rate: 25
@@ -36,3 +36,15 @@ profiles:
     max_rate_pps: 50
     scan_delay_ms: 100
     http_request_delay_s: 3.0
+  comprehensive:
+    description: Full TCP and UDP coverage, all discovered hosts, all severities, and parallel quality-preserving enumeration.
+    ports: 1-65535
+    version_intensity: 5
+    nuclei_rate: 150
+    nuclei_concurrency: 50
+    nuclei_severity: critical,high,medium,low,info
+    skip_nikto: false
+    skip_ssllabs: false
+    max_rate_pps: 2000
+    scan_delay_ms: 0
+    http_request_delay_s: 0.2
