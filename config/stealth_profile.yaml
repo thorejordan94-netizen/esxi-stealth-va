@@ -18,7 +18,7 @@ http:
   user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
     like Gecko) Chrome/136.0.0.0 Safari/537.36
 tls:
-  testssl_mode: --parallel
+  testssl_mode: --sneaky
   connect_timeout_s: 5
   openssl_timeout_s: 10
 general:
