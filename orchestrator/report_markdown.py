@@ -1,15 +1,11 @@
 """Generate enriched JSON and contextual Markdown assessment reports."""
 
-from __future__ import annotations
-
 import json
 import logging
 from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, Iterable, List
 
 from orchestrator.finding_knowledge import (
-    SEVERITY_ORDER,
     contextualize_all,
     overall_risk,
     prioritized_actions,
@@ -21,24 +17,14 @@ from orchestrator.models import AssessmentReport
 logger = logging.getLogger(__name__)
 
 
-def _endpoint(host: str, port: int = 0, url: str = "") -> str:
+def _endpoint(host, port=0, url=""):
     if url:
         return url
     return "{}:{}".format(host, port) if port else host
 
 
-def _base_finding(
-    finding_id: str,
-    title: str,
-    severity: str,
-    category: str,
-    target: str,
-    description: str,
-    evidence: str = "",
-    scanner: str = "",
-    tags: Iterable[str] = (),
-    references: Iterable[str] = (),
-) -> Dict[str, Any]:
+def _base_finding(finding_id, title, severity, category, target, description,
+                  evidence="", scanner="", tags=None, references=None):
     return {
         "id": finding_id or title,
         "title": title or finding_id or "Unnamed finding",
@@ -53,95 +39,76 @@ def _base_finding(
     }
 
 
-def normalize_findings(report: AssessmentReport) -> List[Dict[str, Any]]:
-    """Convert all scanner-specific result types into one stable finding schema."""
+def normalize_findings(report):
+    """Convert scanner-specific results into one stable finding schema."""
     findings = []
 
     for item in report.findings_vulns:
         findings.append(_base_finding(
-            finding_id=item.template_id or item.name,
-            title=item.name or item.template_id,
-            severity=item.severity,
-            category="vulnerability",
-            target=_endpoint(item.host, item.port, item.url),
-            description=item.description,
-            evidence=item.evidence,
-            scanner=item.scanner,
-            tags=item.tags,
-            references=item.reference,
+            item.template_id or item.name,
+            item.name or item.template_id,
+            item.severity,
+            "vulnerability",
+            _endpoint(item.host, item.port, item.url),
+            item.description,
+            item.evidence,
+            item.scanner,
+            item.tags,
+            item.reference,
         ))
 
     for result in report.findings_web:
         for item in result.findings:
             findings.append(_base_finding(
-                finding_id=item.id,
-                title=item.title,
-                severity=item.severity,
-                category="web",
-                target=_endpoint(result.host, result.port, result.url),
-                description=item.description,
-                evidence=item.evidence,
-                scanner="web-assessment",
-                tags=["http", "web"],
+                item.id, item.title, item.severity, "web",
+                _endpoint(result.host, result.port, result.url),
+                item.description, item.evidence, "web-assessment",
+                ["http", "web"],
             ))
 
     for item in report.findings_crypto:
         target = _endpoint(item.host, item.port)
         for index, vulnerability in enumerate(item.vulnerabilities):
             findings.append(_base_finding(
-                finding_id="TLS-{}-{}".format(item.host.replace(".", "-"), index + 1),
-                title=vulnerability,
-                severity=item.severity,
-                category="crypto",
-                target=target,
-                description="TLS assessment reported: {}".format(vulnerability),
-                scanner=item.scan_method,
-                tags=["tls", "ssl", "crypto"],
+                "TLS-{}-{}".format(item.host.replace(".", "-"), index + 1),
+                vulnerability, item.severity, "crypto", target,
+                "TLS assessment reported: {}".format(vulnerability),
+                scanner=item.scan_method, tags=["tls", "ssl", "crypto"],
             ))
 
         certificate = item.certificate
         if certificate and certificate.self_signed:
             findings.append(_base_finding(
-                finding_id="TLS-SELF-SIGNED-{}-{}".format(item.host.replace(".", "-"), item.port),
-                title="Self-signed certificate",
-                severity="medium",
-                category="crypto",
-                target=target,
-                description="The endpoint presents a self-signed certificate that is not anchored in the approved trust chain.",
-                evidence="Subject: {}; Issuer: {}; Valid to: {}".format(
+                "TLS-SELF-SIGNED-{}-{}".format(item.host.replace(".", "-"), item.port),
+                "Self-signed certificate", "medium", "crypto", target,
+                "The endpoint presents a self-signed certificate outside the approved trust chain.",
+                "Subject: {}; Issuer: {}; Valid to: {}".format(
                     certificate.subject, certificate.issuer, certificate.valid_to
                 ),
-                scanner=item.scan_method,
-                tags=["tls", "certificate", "self-signed"],
+                item.scan_method, ["tls", "certificate", "self-signed"],
             ))
 
-        legacy_enabled = []
+        legacy = []
         for version, enabled in (item.tls_versions or {}).items():
             normalized = str(version).lower().replace("_", "").replace(" ", "")
-            if enabled and normalized in {"sslv2", "sslv3", "tlsv1", "tls1.0", "tlsv1.0", "tlsv1.1", "tls1.1"}:
-                legacy_enabled.append(str(version))
-        if legacy_enabled:
+            if enabled and normalized in {
+                "sslv2", "sslv3", "tlsv1", "tls1.0", "tlsv1.0", "tlsv1.1", "tls1.1"
+            }:
+                legacy.append(str(version))
+        if legacy:
             findings.append(_base_finding(
-                finding_id="TLS-LEGACY-{}-{}".format(item.host.replace(".", "-"), item.port),
-                title="Legacy TLS/SSL protocols enabled",
-                severity="medium",
-                category="crypto",
-                target=target,
-                description="The endpoint accepts obsolete protocol versions: {}.".format(", ".join(sorted(legacy_enabled))),
-                scanner=item.scan_method,
-                tags=["tls", "ssl", "crypto", "legacy"],
+                "TLS-LEGACY-{}-{}".format(item.host.replace(".", "-"), item.port),
+                "Legacy TLS/SSL protocols enabled", "medium", "crypto", target,
+                "The endpoint accepts obsolete protocol versions: {}.".format(", ".join(sorted(legacy))),
+                scanner=item.scan_method, tags=["tls", "ssl", "crypto", "legacy"],
             ))
 
         if item.grade and item.grade not in ("A+", "A", "N/A") and not item.vulnerabilities:
             findings.append(_base_finding(
-                finding_id="TLS-GRADE-{}-{}".format(item.host.replace(".", "-"), item.port),
-                title="Suboptimal TLS configuration",
-                severity=item.severity,
-                category="crypto",
-                target=target,
-                description="The TLS endpoint received grade {} and requires configuration review.".format(item.grade),
-                scanner=item.scan_method,
-                tags=["tls", "ssl", "crypto"],
+                "TLS-GRADE-{}-{}".format(item.host.replace(".", "-"), item.port),
+                "Suboptimal TLS configuration", item.severity, "crypto", target,
+                "The TLS endpoint received grade {} and requires configuration review.".format(item.grade),
+                scanner=item.scan_method, tags=["tls", "ssl", "crypto"],
             ))
 
     deduplicated = {}
@@ -154,7 +121,7 @@ def normalize_findings(report: AssessmentReport) -> List[Dict[str, Any]]:
     return list(deduplicated.values())
 
 
-def _coverage(report: AssessmentReport) -> Dict[str, Any]:
+def _coverage(report):
     role_counts = Counter((host.role or "unknown") for host in report.findings_infrastructure)
     protocol_counts = Counter()
     service_counts = Counter()
@@ -182,12 +149,10 @@ def _coverage(report: AssessmentReport) -> Dict[str, Any]:
     }
 
 
-def build_enriched_payload(report: AssessmentReport) -> Dict[str, Any]:
-    normalized = normalize_findings(report)
-    contextual = contextualize_all(normalized)
+def build_enriched_payload(report):
+    contextual = contextualize_all(normalize_findings(report))
     score = risk_score(contextual)
     severity_counts = Counter(item.get("severity", "info") for item in contextual)
-    actionable = sum(1 for item in contextual if item.get("context", {}).get("problematic"))
     payload = report.to_dict()
     payload["reporting"] = {
         "schema_version": "3.0",
@@ -200,7 +165,9 @@ def build_enriched_payload(report: AssessmentReport) -> Dict[str, Any]:
         "overall_risk": overall_risk(score, contextual),
         "operational_risk_score": score,
         "total_contextual_findings": len(contextual),
-        "actionable_findings": actionable,
+        "actionable_findings": sum(
+            1 for item in contextual if item.get("context", {}).get("problematic")
+        ),
         "severity_distribution": {
             severity: severity_counts.get(severity, 0)
             for severity in ("critical", "high", "medium", "low", "info")
@@ -211,7 +178,7 @@ def build_enriched_payload(report: AssessmentReport) -> Dict[str, Any]:
     return payload
 
 
-def write_enriched_json(report: AssessmentReport, output_path: str) -> Dict[str, Any]:
+def write_enriched_json(report, output_path):
     payload = build_enriched_payload(report)
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -220,20 +187,20 @@ def write_enriched_json(report: AssessmentReport, output_path: str) -> Dict[str,
     return payload
 
 
-def _md(value: Any) -> str:
+def _md(value):
     return str(value if value is not None else "").replace("|", "\\|").replace("\n", " ").strip()
 
 
-def _bullet_lines(values: Iterable[str], empty: str = "No additional guidance available.") -> List[str]:
-    values = [str(value).strip() for value in values or [] if str(value).strip()]
-    return ["- {}".format(value) for value in values] if values else ["- {}".format(empty)]
+def _bullets(values, empty="No additional guidance available."):
+    cleaned = [str(value).strip() for value in (values or []) if str(value).strip()]
+    return ["- {}".format(value) for value in cleaned] if cleaned else ["- {}".format(empty)]
 
 
-def _severity_label(value: str) -> str:
+def _severity_label(value):
     return str(value or "info").upper()
 
 
-def generate_markdown_report(report: AssessmentReport, output_path: str, payload: Dict[str, Any] = None):
+def generate_markdown_report(report, output_path, payload=None):
     payload = payload or build_enriched_payload(report)
     metadata = payload.get("metadata", {})
     conclusions = payload.get("assessment_conclusions", {})
@@ -245,8 +212,7 @@ def generate_markdown_report(report: AssessmentReport, output_path: str, payload
     lines = [
         "# ESXi Vulnerability Assessment",
         "",
-        "> This report explains scanner observations, their likely implications, and concrete remediation steps. "
-        "Scanner matches must still be validated against the affected product, configuration, and business context.",
+        "> Scanner matches are explained contextually but must still be validated against the affected product, configuration, and business context.",
         "",
         "## Executive summary",
         "",
@@ -255,10 +221,12 @@ def generate_markdown_report(report: AssessmentReport, output_path: str, payload
         "| Run ID | `{}` |".format(_md(metadata.get("run_id", "unknown"))),
         "| Assessment period | {} |".format(_md(metadata.get("scan_week", "unknown"))),
         "| Primary target | {} |".format(_md(metadata.get("target_primary", "not preselected"))),
-        "| Overall risk | **{}** |".format(_severity_label(conclusions.get("overall_risk", "informational"))),
+        "| Overall risk | **{}** |".format(_severity_label(conclusions.get("overall_risk"))),
         "| Operational risk indicator | **{}/100** |".format(conclusions.get("operational_risk_score", 0)),
         "| Assets covered | {} |".format(coverage.get("asset_count", 0)),
-        "| Open ports recorded | {} |".format(sum(item.get("open_port_count", 0) for item in coverage.get("assets", []))),
+        "| Open ports recorded | {} |".format(sum(
+            item.get("open_port_count", 0) for item in coverage.get("assets", [])
+        )),
         "| Contextual findings | {} |".format(conclusions.get("total_contextual_findings", 0)),
         "| Actionable findings | {} |".format(conclusions.get("actionable_findings", 0)),
         "| Execution errors | {} |".format(len(errors)),
@@ -278,10 +246,7 @@ def generate_markdown_report(report: AssessmentReport, output_path: str, payload
 
     actions = conclusions.get("priority_actions", [])
     if actions:
-        lines.extend([
-            "| Priority | Target | Action | Source |",
-            "|---|---|---|---|",
-        ])
+        lines.extend(["| Priority | Target | Action | Source |", "|---|---|---|---|"])
         for action in actions:
             lines.append("| {} | {} | {} | {} |".format(
                 _md(action.get("priority")), _md(action.get("target")),
@@ -293,24 +258,23 @@ def generate_markdown_report(report: AssessmentReport, output_path: str, payload
     lines.extend(["", "## Detailed findings", ""])
     if not findings:
         lines.extend([
-            "No security findings were recorded. This does not prove the environment is vulnerability-free; review scan coverage and execution errors below.",
+            "No findings were recorded. This does not prove the environment is vulnerability-free; review coverage and execution errors.",
             "",
         ])
 
-    finding_number = 0
+    number = 0
     for level in ("critical", "high", "medium", "low", "info"):
         selected = [item for item in findings if item.get("severity") == level]
         if not selected:
             continue
         lines.extend(["### {}".format(level.upper()), ""])
         for finding in selected:
-            finding_number += 1
+            number += 1
             context = finding.get("context", {})
             lines.extend([
-                "#### {}. {}".format(finding_number, _md(finding.get("title"))),
+                "#### {}. {}".format(number, _md(finding.get("title"))),
                 "",
-                "| Attribute | Value |",
-                "|---|---|",
+                "| Attribute | Value |", "|---|---|",
                 "| ID | `{}` |".format(_md(finding.get("id"))),
                 "| Target | `{}` |".format(_md(finding.get("target"))),
                 "| Category | {} |".format(_md(finding.get("category"))),
@@ -318,29 +282,28 @@ def generate_markdown_report(report: AssessmentReport, output_path: str, payload
                     _severity_label(finding.get("severity")), _md(finding.get("priority"))
                 ),
                 "| Scanner | {} |".format(_md(finding.get("scanner"))),
-                "| Problematic | {} |".format("Yes" if context.get("problematic") else "Contextual observation"),
+                "| Problematic | {} |".format(
+                    "Yes" if context.get("problematic") else "Contextual observation"
+                ),
                 "| Knowledge rule | `{}` |".format(_md(context.get("knowledge_rule"))),
-                "",
-                "**Observation**",
-                "",
+                "", "**Observation**", "",
                 str(finding.get("description") or "No description supplied."),
-                "",
-                "**Conclusion**",
-                "",
+                "", "**Conclusion**", "",
                 str(context.get("risk_statement") or "No contextual conclusion available."),
-                "",
-                "**Implications**",
-                "",
+                "", "**Implications**", "",
             ])
-            lines.extend(_bullet_lines(context.get("implications")))
+            lines.extend(_bullets(context.get("implications")))
             lines.extend(["", "**Recommended measures**", ""])
-            lines.extend(_bullet_lines(context.get("recommended_actions")))
+            lines.extend(_bullets(context.get("recommended_actions")))
             lines.extend(["", "**Verification after remediation**", ""])
-            lines.extend(_bullet_lines(context.get("validation_steps")))
+            lines.extend(_bullets(context.get("validation_steps")))
 
             evidence = str(finding.get("evidence") or "").strip()
             if evidence:
-                lines.extend(["", "<details><summary>Scanner evidence</summary>", "", "```text", evidence[:8000], "```", "", "</details>"])
+                lines.extend([
+                    "", "<details><summary>Scanner evidence</summary>", "", "```text",
+                    evidence[:8000], "```", "", "</details>",
+                ])
             references = finding.get("references") or []
             if references:
                 lines.extend(["", "**References supplied by scanner**", ""])
@@ -348,8 +311,7 @@ def generate_markdown_report(report: AssessmentReport, output_path: str, payload
             lines.append("")
 
     lines.extend([
-        "## Asset and service coverage",
-        "",
+        "## Asset and service coverage", "",
         "| Host | Hostname | Role | OS fingerprint | Open ports |",
         "|---|---|---|---|---|",
     ])
@@ -371,8 +333,7 @@ def generate_markdown_report(report: AssessmentReport, output_path: str, payload
     if delta:
         summary = delta.get("summary") or {}
         lines.extend([
-            "| New | Resolved | Changed | Unchanged |",
-            "|---:|---:|---:|---:|",
+            "| New | Resolved | Changed | Unchanged |", "|---:|---:|---:|---:|",
             "| {} | {} | {} | {} |".format(
                 summary.get("new", 0), summary.get("resolved", 0),
                 summary.get("changed", 0), summary.get("unchanged", 0),
@@ -391,12 +352,10 @@ def generate_markdown_report(report: AssessmentReport, output_path: str, payload
         lines.append("- No execution errors were recorded.")
     lines.extend([
         "- A negative scanner result is not proof that a weakness is absent.",
-        "- UDP service detection can remain inconclusive when firewalls silently drop probes.",
-        "- Scanner matches, especially generic templates and version-based CVEs, require validation before operational decisions.",
+        "- UDP detection can remain inconclusive when firewalls silently drop probes.",
+        "- Generic templates and version-based CVE matches require validation before operational decisions.",
         "- The operational risk indicator is a prioritization aid and is not a CVSS calculation.",
-        "",
-        "## Report artifacts",
-        "",
+        "", "## Report artifacts", "",
         "- `assessment_report.json`: raw findings plus normalized contextual conclusions.",
         "- `assessment_report.md`: this human-readable analysis.",
         "- `assessment_report.html`: compact visual overview.",
