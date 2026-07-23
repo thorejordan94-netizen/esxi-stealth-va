@@ -1,18 +1,18 @@
 network:
-  max_rate_pps: 100
-  scan_delay_ms: 50
-  parallel_hosts: 3
+  max_rate_pps: 200
+  scan_delay_ms: 20
+  parallel_hosts: 4
   connect_timeout_ms: 2000
-  timing_template: 2
+  timing_template: 3
 sweep:
-  host_discovery_delay_ms: 100
+  host_discovery_delay_ms: 50
   prefer_arp: true
   max_rate_pps: 2000
   max_retries: 1
   timing_template: 4
-  timeout_s: 90
+  timeout_s: 300
 http:
-  request_delay_s: 2.0
+  request_delay_s: 1.0
   connect_timeout_s: 5
   read_timeout_s: 10
   user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
@@ -22,5 +22,5 @@ tls:
   connect_timeout_s: 5
   openssl_timeout_s: 5
 general:
-  inter_phase_delay_s: 5
-  max_runtime_s: 14400
+  inter_phase_delay_s: 2
+  max_runtime_s: 0
