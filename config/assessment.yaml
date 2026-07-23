@@ -126,14 +126,8 @@ nuclei:
   rate_limit: 150
   concurrency: 50
   timeout: 15
-  tags:
-  - cve
-  - misconfig
-  - exposure
-  - default-login
-  - tech
-  - network
-  - takeover
+  execution_timeout_s: 86400
+  tags: []
   exclude_tags:
   - dos
   - fuzz
