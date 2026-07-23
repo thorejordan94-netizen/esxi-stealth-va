@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
 """
-ESXi Vulnerability Assessment Framework (v2.1.0)
+ESXi Vulnerability Assessment Framework (v3.0.0)
 ================================================
 
-Single-command entry point for the expanded automated pentest pipeline.
+Single-command entry point for the comprehensive internal assessment pipeline.
 
 Usage:
   python run_assessment.py                # Configured scope, or auto-detect when scope is empty
   python run_assessment.py --auto-network # Auto-detect network and run assessment
   python run_assessment.py --update       # Force start from Phase 0
-  python run_assessment.py --profile thorough  # deep scan (1-65535 ports)
+  python run_assessment.py --profile comprehensive  # every TCP/UDP port and all findings
   python run_assessment.py --mock         # Full pipeline with synthetic data
-  python run_assessment.py --phase 6      # Resume from Nuclei vuln scanning
+  python run_assessment.py --phase 6      # Resume from Nuclei vulnerability scanning
 
 Environment:
   ASSESSMENT_MOCK_MODE=1   → Activates mock mode
 
 Output:
-  output/assessment_report.json  → Final JSON report
-  output/assessment_report.html  → Premium HTML report
+  output/assessment_report.json  → Raw results plus normalized conclusions/remediation
+  output/assessment_report.md    → Contextual human-readable assessment
+  output/assessment_report.html  → Compact visual overview
   output/history/YYYY-Wxx/       → Archived reports
   logs/assessment_*.log          → Audit log
 """
@@ -34,13 +35,20 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# Cleaned up imports (no duplicates)
+import orchestrator.main as orchestrator_main
 from orchestrator.main import (
     determine_default_start_phase,
     load_config,
     run_pipeline,
     setup_logging,
 )
+from orchestrator.comprehensive_scanning import (
+    ComprehensiveDiscovery,
+    ComprehensiveServiceEnum,
+    ComprehensiveVulnScan,
+    ComprehensiveWeb,
+)
+from orchestrator.report_markdown import generate_markdown_report, write_enriched_json
 from orchestrator.ssl_scanner import run_ssl_automation
 from orchestrator.network_detector import (
     auto_detect_network,
@@ -48,6 +56,15 @@ from orchestrator.network_detector import (
 )
 from orchestrator.bootstrap import ensure_discovery_prerequisites
 from orchestrator.email_report import send_report
+
+
+# run_pipeline resolves these classes through orchestrator.main's module globals.
+# Replacing them here preserves the existing phase/checkpoint architecture while
+# enabling complete coverage and parallel execution.
+orchestrator_main.ExpandedDiscovery = ComprehensiveDiscovery
+orchestrator_main.ExpandedServiceEnum = ComprehensiveServiceEnum
+orchestrator_main.Phase5Web = ComprehensiveWeb
+orchestrator_main.Phase6VulnScan = ComprehensiveVulnScan
 
 
 def get_ssl_automation_subnets(config):
@@ -80,6 +97,33 @@ def has_configured_scope(config):
         or discovery.get("subnets")
     )
 
+
+def _apply_comprehensive_runtime_defaults(config):
+    """Apply non-truncating runtime defaults without overriding explicit scope."""
+    profile_name = config.get("scan_profile", {}).get("active_profile", "standard")
+    if profile_name != "comprehensive":
+        return
+
+    assessment = config.setdefault("assessment", {})
+    scan = assessment.setdefault("scan", {})
+    expanded = assessment.setdefault("expanded_discovery", {})
+    udp = expanded.setdefault("udp", {})
+    security = assessment.setdefault("security_tests", {})
+    nuclei = assessment.setdefault("nuclei", {})
+
+    scan["ports"] = "1-65535"
+    expanded["tcp_ports"] = "1-65535"
+    udp["enabled"] = True
+    udp["ports"] = "1-65535"
+    security["max_ports_per_host"] = 0
+    nuclei["severity_filter"] = "critical,high,medium,low,info"
+
+    # The orchestrator's runtime guard remains as a failure-safety mechanism,
+    # but a comprehensive run is not practically truncated by the old 4-8 hour
+    # default. One year is effectively unbounded for an individual run.
+    config.setdefault("stealth", {}).setdefault("general", {})["max_runtime_s"] = 31536000
+
+
 def main():
     # Fix Windows console encoding
     if sys.stdout.encoding != 'utf-8':
@@ -96,7 +140,7 @@ def main():
         help="Force the pipeline to start from Phase 0 (Self-Update)."
     )
     parser.add_argument(
-        "--profile", type=str, choices=["quick", "standard", "thorough"], default=None,
+        "--profile", type=str, choices=["quick", "standard", "thorough", "comprehensive"], default=None,
         help="Scan intensity profile (defaults to value in scan_profile.yaml)."
     )
     parser.add_argument(
@@ -139,8 +183,6 @@ def main():
         "--setup", action="store_true",
         help="Open the terminal checkbox setup wizard for scope, settings, and email delivery."
     )
-    # With an explicit target/subnet, respect the setup wizard's scope. Empty
-    # configs still get automatic private-network discovery below.
     parser.set_defaults(auto_network=None)
 
     args = parser.parse_args()
@@ -149,16 +191,14 @@ def main():
         from setup_wizard import main as setup_main
         return setup_main(config_dir=PROJECT_ROOT / args.config_dir)
 
-    # --- Banner ---
     print("\033[94m")
     print("╔══════════════════════════════════════════════════════════════════╗")
-    print("║     ESXi Vulnerability Assessment Framework v2.1.0               ║")
-    print("║     Automated Weekly Pentest Orchestrator                        ║")
-    print("║     Internal Use Only — CyberArk PSM Monitored                   ║")
+    print("║     ESXi Vulnerability Assessment Framework v3.0.0               ║")
+    print("║     Comprehensive coverage + contextual remediation reporting    ║")
+    print("║     Internal Use Only — Authorized Scope Required                ║")
     print("╚══════════════════════════════════════════════════════════════════╝")
     print("\033[0m")
 
-    # --- Setup ---
     log_dir = PROJECT_ROOT / "logs"
     log_file = setup_logging(log_dir)
 
@@ -181,7 +221,6 @@ def main():
         else:
             print("[*] Using the target/subnets from configuration. Use --auto-network to override.")
 
-    # Auto-detect network if requested
     if args.auto_network and not args.dry_run and not args.mock:
         print("\n[*] Auto-detecting network configuration...")
         prerequisite_status = ensure_discovery_prerequisites(auto_install=not args.no_install)
@@ -195,12 +234,12 @@ def main():
             print("ERROR: Failed to auto-detect network. Please configure manually or check network connectivity.")
             sys.exit(1)
 
-    # Override scan profile if specified via CLI
     if args.profile:
         config["scan_profile"]["active_profile"] = args.profile
         print(f"[*] Overriding scan profile: {args.profile}")
 
-    # Determine start phase
+    _apply_comprehensive_runtime_defaults(config)
+
     start_phase = determine_default_start_phase(config)
     if args.update:
         start_phase = 0
@@ -209,14 +248,10 @@ def main():
     if args.dry_run:
         start_phase = 1
 
-    # Disable delta if requested
     if args.no_delta:
         config["assessment"]["phases"]["phase7_delta"] = False
 
-    # --- Run Pipeline ---
     try:
-        # --> TRIGGER SSL AUTOMATION BEFORE MAIN PIPELINE <--
-        # We skip it during a dry-run so it doesn't accidentally launch Nmap
         if not args.dry_run and not args.mock:
             ssl_subnets = get_ssl_automation_subnets(config)
             if ssl_subnets:
@@ -226,7 +261,6 @@ def main():
                     "Skipping standalone SSL automation because no subnets are configured."
                 )
 
-        # Now run the main framework pipeline
         report = run_pipeline(
             config=config,
             start_phase=start_phase,
@@ -234,16 +268,21 @@ def main():
             dry_run=args.dry_run,
         )
 
-        # --- Final output ---
         json_path = output_dir / "assessment_report.json"
+        markdown_path = output_dir / "assessment_report.md"
         html_path = output_dir / "assessment_report.html"
+
+        if not args.dry_run and report is not None:
+            enriched_payload = write_enriched_json(report, str(json_path))
+            generate_markdown_report(report, str(markdown_path), enriched_payload)
 
         if args.dry_run:
             print(f"\n\033[92mDry-run completed successfully\033[0m")
             exit_code = 0
-        elif json_path.exists():
+        elif json_path.exists() and markdown_path.exists():
             print(f"\n\033[92m✅ Assessment Completed Successfully\033[0m")
             print(f"📊 JSON Report: {json_path.absolute()}")
+            print(f"📝 Markdown Report: {markdown_path.absolute()}")
             if html_path.exists():
                 print(f"🖥️  HTML Report: {html_path.absolute()}")
 
@@ -274,6 +313,7 @@ def main():
     print(f"\n📋 Log file: {log_file}")
     print()
     return exit_code
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
